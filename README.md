@@ -32,7 +32,7 @@ thcli auth login
 # 2. 看有哪些模型
 thcli models list
 
-# 3. 对话（--model 直接填模型 ID）
+# 3. 对话（--model 直接填接入点 ID）
 thcli +chat --model hy3 "你好"
 
 # 4. 把 Skills 拉下来并注入本地 Agent
