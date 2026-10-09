@@ -43,22 +43,8 @@ export interface Portal {
 
 /** 单个地域的配置 */
 export interface RegionConfig {
-  /** 数据面推理接口的 host */
+  /** 数据面推理接口的 host，按量 / 企业版 / 个人版都走它 */
   chatHost: string;
-  /**
-   * TokenPlan（`--plan`）专用 origin，按 **plan 类型 → 环境** 两层指定。
-   *
-   * 为什么不能复用 chatHost：同一个地域下两种套餐落在不同服务上——国内站个人版
-   * （sk-tp）走 lkeap 那套独立网关，企业版（sk-tp-ep）仍在 chatHost 上。所以
-   * 键必须带 plan 类型，只按地域区分不出来。
-   *
-   * 也不能复用 chatHostPrefix：lkeap 的 test 与 prod 是 api. → testapi. 的**替换**，
-   * 不是加前缀。
-   *
-   * 只有"与 chatHost 不同"的组合才配这一项，其余留空自动回落 chatHost
-   * （企业版全部、以及国际站个人版都靠回落）。值可带 scheme，不带按 https。
-   */
-  planHost?: Record<string, Record<string, string>>;
 }
 
 /** 单个站点的配置 */
@@ -189,14 +175,6 @@ const DEFAULT_CONFIG: ThcliConfig = {
       regions: {
         gz: {
           chatHost: "tokenhub.tencentmaas.com",
-          // 个人版国内站是唯一与 chatHost 不同的组合：走 lkeap 独立网关。
-          // 企业版不配 → 回落 chatHost（tokenhub.tencentmaas.com），那是对的。
-          // 只列 prod；非正式环境的 host 同样走 ~/.thcli/config.json 补充
-          planHost: {
-            tp: {
-              prod: "api.lkeap.cloud.tencent.com",
-            },
-          },
         },
         sg: { chatHost: "tokenhub-intl.tencentmaas.com" },
       },
@@ -256,8 +234,12 @@ const PATH_ENV_BY_SITE: Record<string, { callback: string; prefix: string }> = {
   intl: { callback: "THCLI_AUTH_CALLBACK_PATH_INTL", prefix: "THCLI_AUTH_PATH_PREFIX_INTL" },
 };
 
-/** 深合并：override 里出现的字段覆盖 base，未出现的保留 base 的值 */
-function deepMerge<T>(base: T, override: unknown): T {
+/**
+ * 深合并：override 里出现的字段覆盖 base，未出现的保留 base 的值。
+ * 对象逐键下钻，数组与标量整体替换；override 为 undefined 时原样返回 base。
+ * 用户配置覆盖、agent 写配置、+gen 的 --body 合并共用这一份。
+ */
+export function deepMerge<T>(base: T, override: unknown): T {
   if (override === null || typeof override !== "object" || Array.isArray(override)) {
     return (override === undefined ? base : (override as T));
   }
@@ -348,10 +330,6 @@ export function apiEndpointOf(env: string): string | undefined {
 }
 
 /**
- * 其它云产品（cam / monitor / sts）在当前环境的 host。
- * product 传 "cam" 得到 cam.tencentcloudapi.com 或 cam.test.tencentcloudapi.com。
- */
-/**
  * 是否对该环境跳过 TLS 校验。
  *
  * 缺省环境（prod）永远返回 false，无论配置里写了什么——把"漏到生产"从"取决于
@@ -369,6 +347,10 @@ export function insecureTlsOf(env: string): boolean {
   return envConfigOf(env).insecureTls === true;
 }
 
+/**
+ * 其它云产品（cam / monitor / sts）在当前环境的 host。
+ * product 传 "cam" 得到 cam.tencentcloudapi.com 或 cam.test.tencentcloudapi.com。
+ */
 export function cloudApiHostOf(env: string, product: string): string {
   const conf = envConfigOf(env);
   const suffix = conf.cloudApiSuffix ?? "tencentcloudapi.com";
@@ -422,16 +404,46 @@ export function chatHostOf(site: string, region: string, env: string = DEFAULT_E
 }
 
 /**
- * TokenPlan 只在这些站点+地域组合上有网关。
- *
- * 其余组合（国内站+新加坡、国际站+广州）根本不提供 TokenPlan——过去会照常拼出
- * 一个不存在的地址发出去，用户拿到的是连接层报错，看不出根因是"这个组合没有该服务"。
+ * 数据面地域 → 云 API 地域。云端 API Key 按地域分池：同一个账号在 ap-guangzhou 和
+ * ap-singapore 看到的 Key 列表不同，建 Key 也落在不同的池子里。所以"要给 sg 用的 Key"
+ * 必须拿 ap-singapore 的凭证去建，否则建出来的 Key 在 sg 网关上用不了。
  */
-const PLAN_REGIONS: Record<string, string[]> = { cn: ["gz"], intl: ["sg"] };
+const AREA_CLOUD_REGIONS: Record<string, string> = {
+  gz: "ap-guangzhou",
+  sg: "ap-singapore",
+};
+
+/** 数据面地域对应的云 API 地域；未知地域按缺省（ap-guangzhou）。 */
+export function areaCloudRegion(area: string): string {
+  return AREA_CLOUD_REGIONS[area] ?? DEFAULT_CLOUD_REGION;
+}
 
 /**
- * `--plan` 通道的 origin（含 scheme）。先校验站点/地域组合是否提供 TokenPlan，
- * 再按 plan 类型取专用 host；没有专用配置的一律回落数据面 chatHost。
+ * 个人版 TokenPlan（tp）的网关只在这些站点+地域组合上有：国内站只有广州，国际站只有新加坡。
+ * 企业版（tp-ep）不受此限，站点下的地域都提供（与按量一致）。
+ *
+ * 其余组合（个人版 + 国内站新加坡 / 国际站广州）不提供服务——不校验的话会拼出一个
+ * 不存在的地址发出去，用户拿到的是连接层报错，看不出根因是"这个组合没有该服务"。
+ */
+const PERSONAL_PLAN_REGIONS: Record<string, string[]> = { cn: ["gz"], intl: ["sg"] };
+
+/** 某套餐类型在该站点上可用的地域 */
+function planRegionsOf(planType: string, site: string): string[] {
+  return planType === "tp" ? PERSONAL_PLAN_REGIONS[site] ?? [] : allowedRegions(site);
+}
+
+/**
+ * 套餐通道没给 --area 时的默认地域。
+ * 个人版只有一个地域可选，就用它（国际站个人版只有 sg，不能用缺省的 gz）；
+ * 企业版与按量一样用缺省地域 gz。
+ */
+export function defaultPlanRegion(planType: string, site: string): string {
+  return planType === "tp" ? PERSONAL_PLAN_REGIONS[site]?.[0] ?? DEFAULT_REGION : DEFAULT_REGION;
+}
+
+/**
+ * `--plan` 通道的 origin（含 scheme）。先校验站点/地域组合是否提供该套餐，
+ * 再取数据面 host——个人版与企业版走同一套网关，域名只由站点/地域决定。
  */
 export function planOriginOf(
   planType: string,
@@ -439,21 +451,17 @@ export function planOriginOf(
   region: string,
   env: string = DEFAULT_ENV,
 ): string {
-  const allowed = PLAN_REGIONS[site] ?? [];
+  const allowed = planRegionsOf(planType, site);
   if (!allowed.includes(region)) {
     throw new Error(
       t("config.noPlanRegion", {
         site,
         region,
-        options: Object.entries(PLAN_REGIONS)
-          .map(([s, rs]) => `${s}/${rs.join(",")}`)
+        options: allowedSites()
+          .map((s) => `${s}/${planRegionsOf(planType, s).join(",")}`)
           .join("  "),
       }),
     );
-  }
-  const explicit = loadConfig().sites[site]?.regions[region]?.planHost?.[planType]?.[env];
-  if (explicit) {
-    return /^https?:\/\//.test(explicit) ? explicit : `https://${explicit}`;
   }
   return `https://${chatHostOf(site, region, env)}`;
 }

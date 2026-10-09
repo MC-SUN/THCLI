@@ -117,3 +117,48 @@ describe("密钥脱敏", () => {
     JSON.parse(text); // 仍须是合法 JSON
   });
 });
+
+describe("--verbose 请求追踪", () => {
+  /** 抓 console.error 输出 */
+  function captureErr(run: () => void): string {
+    const lines: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]): void => {
+      lines.push(args.map(String).join(" "));
+    };
+    try {
+      run();
+    } finally {
+      console.error = original;
+    }
+    return lines.join("\n");
+  }
+
+  it("密钥头打码，其它头原样；超长 Base64 截断并注明长度", async () => {
+    const { traceRequest } = await import("../src/core/output.js");
+    const out = captureErr(() =>
+      traceRequest(
+        "POST",
+        "https://h/v1/messages",
+        { Authorization: "Bearer sk-abcdefghijklmnop", "x-api-key": "sk-abcdefghijklmnop", "anthropic-version": "2023-06-01" },
+        { image: `data:image/png;base64,${"A".repeat(500)}` },
+      ),
+    );
+    assert.doesNotMatch(out, /sk-abcdefghijklmnop/);
+    assert.match(out, /Authorization: Bearer sk-a\*+mnop/);
+    assert.match(out, /anthropic-version: 2023-06-01/);
+    assert.match(out, /…\(522 chars\)/);
+  });
+});
+
+describe("数据面鉴权头", () => {
+  it("所有协议统一 Bearer，不带 x-api-key；Anthropic 另带 anthropic-version", async () => {
+    const { authHeadersOf } = await import("../src/core/data-plane.js");
+    assert.deepEqual(authHeadersOf("openai", "sk-x"), { Authorization: "Bearer sk-x", "Content-Type": "application/json" });
+    assert.deepEqual(authHeadersOf("anthropic", "sk-x"), {
+      Authorization: "Bearer sk-x",
+      "Content-Type": "application/json",
+      "anthropic-version": "2023-06-01",
+    });
+  });
+});

@@ -21,6 +21,7 @@ export const CLOUD_CODES: string[] = [
   "AuthFailure.SignatureFailure",
   "AuthFailure.TokenFailure",
   "AuthFailure.SecretIdMalformed",
+  "AuthFailure.UnauthorizedOperation",
   "UnauthorizedOperation",
   "RequestLimitExceeded",
   "ResourceNotFound",

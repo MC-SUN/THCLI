@@ -53,10 +53,12 @@ thcli auth login --browser no
 | `models` | 模型广场：列表、详情、比价 |
 | `endpoint` | 推理接入点：列表、详情、改配、删除 |
 | `deploy` | 为模型创建推理接入点 |
-| `+chat` | 与模型对话（唯一真正调用推理接口的命令） |
+| `+chat` | 与模型对话，支持多图 / 视频理解 |
+| `+gen` | 生图 / 生视频 / 生 3D（提交、轮询、下载） |
 | `chat-config` | 本地维护对话用的 API Key |
 | `key` | API 密钥：增删改查、启停、查明文 |
-| `plan` | 套餐（TokenPlan）：购买、续费、专属 Key、用量 |
+| `plan` | 企业版套餐（TokenPlan）：购买、续费、专属 Key、用量 |
+| `plan personal` | 个人版套餐（通用 / Hy）：持有状态、模型、用量趋势、共享 Key |
 | `usage` | 用量观测：排行图表、CSV 导出 |
 | `monitor` | 服务健康度：请求量、错误率、延迟、非文本模型产出量 |
 | `doctor` | 诊断：全链路体检与分项排查（只读） |
@@ -64,6 +66,7 @@ thcli auth login --browser no
 | `site` | 站点：国内站 `cn` / 国际站 `intl` |
 | `lang` | 界面语言（`zh` / `en`） |
 | `+connect` | 把 Agent Skills 注入本地 Agent |
+| `agent` / `equip` | 把 TokenHub 模型一键接入 Claude Code、Codex、CodeBuddy 等工具 |
 
 任何一层都可以 `--help`：
 
@@ -123,7 +126,77 @@ thcli models list --region ap-singapore     # 或单次指定，不改默认
 主域随站点变（`tencentmaas` / `tencentcloudmaas`），`-intl` 后缀随地域变 —— 所以
 「国内广州」和「国际广州」是两个不同的地址，对话用 `Bearer <APIKey>` 认证。
 
-## Agent 接入
+## 个人版套餐
+
+个人版（通用 Token Plan / Hy Token Plan）的接口在 tokenhub 产品下，用 `--series common|hy` 区分系列：
+
+```shell
+thcli plan personal list                          # 两个系列的持有状态
+thcli plan personal models --series hy            # 系列可用模型
+thcli plan personal info --series common          # 套餐详情（档位 / 有效期 / 积分 / 共享 Key）
+thcli plan personal usage tokens --series common  # Token 用量趋势（默认 7day 按日；--range today 看当日分钟级）
+thcli plan personal usage credits --series common # 积分用量趋势
+thcli plan personal records --series common       # 逐次调用明细
+thcli plan personal key reveal --save             # 取共享 Key 并存入本地
+thcli +chat --plan tp --model hy3 "你好"           # 用个人版额度对话
+```
+
+购买 / 续费 / 升配暂无开放接口，对应命令会打印控制台链接。
+
+## 多模态理解与生成
+
+图片 / 视频**理解**就是对话：`+chat` 的 `--input` 可重复，本地文件自动 Base64（平台没有上传接口），
+公网 URL 原样透传：
+
+```shell
+thcli +chat --model hy-vision-2.0-instruct --input a.png --input b.png "比较两张图"
+thcli +chat --model kimi-k3 --input https://example.com/clip.mp4 "视频讲了什么"
+```
+
+图片 / 视频 / 3D **生成**用 `+gen`，异步任务自动轮询，`--output` 直接下载（结果地址约 12 小时失效）：
+
+```shell
+thcli +gen models
+thcli +gen image --model hy-image-v3 "一只橙色小猫" --output ./out
+thcli +gen video --model hy-video-v1.5 "小狗在草地上奔跑" --image first.jpg --output ./out
+thcli +gen 3d    --model hy-3d-3.1 "一只卡通小狗" --output ./out
+```
+
+加 `--verbose` 可看到每次请求与原始响应（Key 打码、Base64 截断），便于核对参数。
+
+```shell
+thcli +gen models --model hy-video-v1.5    # 这个模型支持哪些选项、官方调用指南
+thcli +gen status                          # 本机提交过的异步任务（自动刷新状态，找回任务 ID）
+thcli +gen status --task-id <id> --wait --output ./out
+```
+
+## Agent 工具一键接入
+
+`thcli agent install`（简写 `thcli equip`）把服务地址、API Key、模型列表写进本地 Agent 工具的配置。
+**需要先登录**（`thcli auth login`）：Key 与可用模型都按账号获取。
+
+```shell
+thcli agent list                                  # 支持的工具与检测结果
+thcli agent models --plan tp --series hy          # 当前账号可接入的模型
+thcli agent install claude-code codex --dry-run   # 预览要改的文件
+thcli agent install claude-code codex             # 按量后付费（--plan th，默认）
+thcli equip codex --plan tp                       # 个人版套餐
+thcli agent status                                # 已接入的工具与当前指向
+thcli agent restore codex                       # 还原到接入前
+```
+
+写配置：Claude Code、Codex、CodeBuddy Code、OpenCode、OpenClaw、Kimi Code、Pi、WorkBuddy、Kilo Code；
+界面填写（打印入口与填写项）：Cursor、Cline、Roo Code、Trae——它们没有可写的配置文件（扩展配置存在编辑器内部数据库与系统钥匙串，Cursor / Trae 只提供界面配置）。
+
+- 只需要选通道，各工具要求的路径后缀（如 OpenAI 兼容的 `/v1`）由 CLI 按工具协议处理。
+- 写入前汇总确认；只合并我们的配置项，用户原有配置保留；写入前备份原文件，含 Key 的文件 0600。
+- 写入后按工具实际协议各发一次 `max_tokens=1` 的请求验证（`--no-verify` 跳过）。
+- Key 从云端列表选择、新建或粘贴（`--api-key` 直接传入），与 `+chat` 用的本地 Key 无关。
+- 模型按所选 Key 能调的范围列出、多选，第一个为默认；`--models` / `--model` 可直接指定；Claude Code 的 fable / opus / sonnet / haiku 档位按所选顺序自动填。
+- 所选 Agent 未安装时询问后用 `npm install -g <包名>` 安装（与官方一致：最新版，不改 Agent 自己的自动更新）；WorkBuddy 是桌面应用，需先从官网下载安装后再接入。
+- Codex 的 Key 写在 `~/.codex/config.toml` 的 `experimental_bearer_token`（0600），不需要环境变量、不改 shell 配置；该字段是 Codex 的实验字段，自行升级 Codex 后若鉴权失败，重跑一次接入即可。
+
+## Agent Skills 接入
 
 `+connect` 把 Agent Skills 从远端下载到本地缓存 `~/.thcli/skills-cache/`，再拷进本地 Agent 的 skills 目录，Agent 下次启动即可用自然语言驱动 thcli（"帮我看看哪个模型最便宜"、"这个 Key 为什么调不通"）。
 
@@ -154,6 +227,9 @@ thcli +connect --target ~/.some-agent/skills
 | `config.json` | 0644 | 可选，按字段局部覆盖内置基础设施配置 |
 | `log/` | 0600 | 调用日志，见下 |
 | `skills-cache/` | 0644 | `+connect` 下载的 Agent Skills 缓存 |
+| `agent-state.json` | 0600 | `agent install` 的台账：改过哪些文件、备份在哪 |
+| `agent-backups/` | 0600 | `agent install` 写入前的原文件备份 |
+| `gen-tasks.jsonl` | 0600 | `+gen` 提交过的异步任务（任务 ID、模型、提示词开头、状态），`+gen status` 读取 |
 
 `{profile}.configure` 只在 `profile create` 或 `profile set --region` 时才生成；只用
 `auth login` 的 profile 没有这个文件是正常的，`region` 会回退到内置默认。
@@ -185,7 +261,7 @@ thcli doctor error <code>   # 查错误码含义
 ## 计费提醒
 
 会产生费用的命令默认都有二次确认：`plan buy` / `renew` / `upgrade`、`endpoint postpaid on`、
-`deploy`。`+chat` 按 token 计费。其余命令为查询类。
+`deploy`。`+chat` / `+gen` 按量计费（视频与 3D 单次费用较高）。`agent install` 只改本地文件。其余命令为查询类。
 
 ## 环境要求
 

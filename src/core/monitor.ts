@@ -50,6 +50,11 @@ export interface MetricMeta {
    * 由调用方在下钻时明确提示，而不是静默返回空图。
    */
   uinOnly?: boolean;
+  /**
+   * 指标体系与 `uin` 那套不同源：查询时**不带 uin 维度**，维度完全由调用方的
+   * extraDimensions 决定（如 `TpEPkg*` 按套餐 `tpepkgid`）。默认 false = 带 uin。
+   */
+  accountScoped?: boolean;
 }
 
 /**
@@ -166,6 +171,42 @@ export const PERF_METRICS: MetricMeta[] = [
 
 /** monitor 缺省展示的健康度指标：请求量、错误率、两个关键延迟 */
 export const DEFAULT_PERF_KEYS = ["rpm", "error-ratio", "ttft", "latency"];
+
+/**
+ * 个人版 / 企业版 TokenPlan 套餐的用量指标（`TpEPkg*` 前缀）。
+ *
+ * 两套粒度：总量（Period=86400 得到每日趋势）与每分钟速率（Period=60~300 得到分钟级
+ * 走势）。Token 与积分各一组，`plan personal usage tokens` / `usage credits` 分别取用。
+ *
+ * 指标名来自控制台元数据，`TpEPkg` 前缀的 `E` = 企业版？不——实测个人版套餐
+ * （ProductType=personal）的用量也归在这套指标下，控制台「个人版用量」页读的就是它。
+ * 维度是套餐（PkgId），与上面按 uin 聚合的那套不同源。
+ */
+export const PACKAGE_METRICS: MetricMeta[] = [
+  // 每日总量（Period 86400）：只有总量，接口没有"每日输入 / 输出"指标
+  { name: "TpEPkgTotalToken", key: "token", label: "每日Token总用量", unit: "token", accountScoped: false },
+  { name: "TpEPkgTotalCredits", key: "credits", label: "每日积分总用量", unit: "credit", accountScoped: false },
+  // 分钟级 Token（Period 300）：总量 / 输入 / 输出
+  { name: "TpEPkgTpm", key: "tpm", label: "每分钟Token用量", unit: "token/min", accountScoped: false },
+  { name: "TpEPkgInputTpm", key: "input-tpm", label: "每分钟输入Token用量", unit: "token/min", accountScoped: false },
+  { name: "TpEPkgOutputTpm", key: "output-tpm", label: "每分钟输出Token用量", unit: "token/min", accountScoped: false },
+  // 分钟级积分（Period 300）：总量 / 输入 / 输出，与 Token 分钟级一一对应
+  { name: "TpEPkgCredits", key: "credits-pm", label: "每分钟积分用量", unit: "credit/min", accountScoped: false },
+  { name: "TpEPkgInputCredits", key: "input-credits", label: "每分钟输入积分用量", unit: "credit/min", accountScoped: false },
+  { name: "TpEPkgOutputCredits", key: "output-credits", label: "每分钟输出积分用量", unit: "credit/min", accountScoped: false },
+];
+
+/** 按 key 找套餐指标 */
+export function packageMetricByKey(key: string): MetricMeta {
+  const hit = PACKAGE_METRICS.find((m) => m.key === key);
+  if (!hit) {
+    throw new Error(
+      `${t("metric.unknown", { key, options: PACKAGE_METRICS.map((m) => m.key).join(", ") })}\n` +
+        t("metric.unknownHint", { command: "thcli plan personal usage tokens" }),
+    );
+  }
+  return hit;
+}
 
 /**
  * 非文本模型（图片/视频/音频/3D）的按模型指标。
@@ -359,6 +400,13 @@ export interface MonitorQuery {
    * 键是 DIMENSION_KEYS 里的短名，值是对象标识（模型名/端点 ID/密钥 ID）。
    */
   filters?: Record<string, string>;
+  /**
+   * 额外维度，直接用云监控的维度名（如 `tpepkgid`）。
+   *
+   * 给不在这套 uin 维度体系里的指标用（`TpEPkg*` 按套餐聚合）。与 filters 不同，
+   * 它不做短名翻译、也不受 uinOnly 影响，由调用方按接口定义拼。
+   */
+  extraDimensions?: Array<{ Name: string; Value: string }>;
 }
 
 /** 把 CLI 的维度短名翻成云监控的维度名，未知名字明确报错 */
@@ -412,7 +460,12 @@ export async function buildMonitorClient(args: GlobalArgs): Promise<MonitorClien
       // uinOnly 指标带上下钻条件会查不到数据，故跳过并标记，由调用方告知用户。
       const wanted = Object.entries(query.filters ?? {});
       const drilldownIgnored = meta.uinOnly === true && wanted.length > 0;
-      const dimensions = [{ Name: "uin", Value: uin }];
+      // accountScoped=false 的指标（TpEPkg*）不带 uin，维度只由调用方给
+      const dimensions: Array<{ Name: string; Value: string }> =
+        meta.accountScoped === false ? [] : [{ Name: "uin", Value: uin }];
+      for (const d of query.extraDimensions ?? []) {
+        dimensions.push(d);
+      }
       if (!drilldownIgnored) {
         for (const [key, value] of wanted) {
           dimensions.push({ Name: toApiDimension(key), Value: value });

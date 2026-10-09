@@ -33,7 +33,7 @@ import {
 import { colorEnabled, SERIES_CAPACITY, seriesColor, seriesGlyph } from "../core/color.js";
 import { emitJson, isJson } from "../core/output.js";
 import { lang, t } from "../core/i18n.js";
-import { assertRfc3339 } from "../core/time.js";
+import { assertRfc3339, toOffsetIso } from "../core/time.js";
 import {
   buildMonitorClient,
   metricLabel,
@@ -83,26 +83,6 @@ function defaultTimeRange(): { start: string; end: string } {
   const dayAgo = new Date(now.getTime() - 24 * 3600 * 1000);
   const fmt = (d: Date): string => `${d.toISOString().slice(0, 19)}Z`;
   return { start: fmt(dayAgo), end: fmt(now) };
-}
-
-/**
- * 转成监控接口要的 ISO8601 带偏移格式（2026-08-23T00:00:00+08:00）。
- * 管控面接口用的是 Z 结尾的 UTC，两者不通用，故这里显式转一次。
- */
-function toOffsetIso(value: string): string {
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) {
-    throw new Error(t("time.badFormat", { value }));
-  }
-  const p = (n: number): string => String(n).padStart(2, "0");
-  const offsetMin = -d.getTimezoneOffset();
-  const sign = offsetMin >= 0 ? "+" : "-";
-  const abs = Math.abs(offsetMin);
-  return (
-    `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` +
-    `T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` +
-    `${sign}${p(Math.floor(abs / 60))}:${p(abs % 60)}`
-  );
 }
 
 function buildParams(opts: Record<string, string>): Record<string, unknown> {

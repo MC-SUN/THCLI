@@ -12,12 +12,9 @@
  * --responses/--search 就改道。CLI 不替用户和后端决定"这个组合该走哪"，也不做
  * 客户端主观拦截，网关的真实响应（含报错）如实透传。
  */
-import fs from "node:fs";
-import path from "node:path";
-import os from "node:os";
 import { Command } from "commander";
 
-import { allowedRegions, chatHostOf, DEFAULT_REGION, planOriginOf } from "../core/config.js";
+import { allowedRegions, chatHostOf, DEFAULT_REGION, defaultPlanRegion, planOriginOf } from "../core/config.js";
 import {
   type GlobalArgs,
   mask,
@@ -35,22 +32,27 @@ import {
   setRegionKey,
   type KeyType,
 } from "../core/keystore.js";
+import { buildChatContent, type PayloadShape } from "../core/chat-content.js";
+import { authHeadersOf } from "../core/data-plane.js";
+import { collect } from "../core/format.js";
+import { emitJson, isJson, traceRequest, traceResponse } from "../core/output.js";
 import { logDataPlaneCall } from "../core/telemetry.js";
 import { lookupError } from "../core/errors.js";
 import { t } from "../core/i18n.js";
 
-/** 各通道的 URL 路径 */
+/**
+ * 各通道的 URL 路径。按量三种协议同一组 Base URL、只换路径（文档 1823/130079
+ * 「协议与调用方式」）：/v1/chat/completions、/v1/responses、/v1/messages。
+ */
 const CHANNEL_PATHS = {
   chat: "/v1/chat/completions",
   plan: "/plan/v3/chat/completions",
   planAnthropic: "/plan/anthropic/v1/messages",
   responses: "/v1/responses",
+  anthropic: "/v1/messages",
 } as const;
 
 type Channel = keyof typeof CHANNEL_PATHS;
-
-/** body 结构的三种形状。与 URL 通道不是一一对应，见 resolveRequest */
-type PayloadShape = "chat" | "responses" | "anthropic";
 
 /**
  * Anthropic Messages API 的 max_tokens 是必填字段（OpenAI 侧可选）。用户没给就
@@ -58,15 +60,21 @@ type PayloadShape = "chat" | "responses" | "anthropic";
  */
 const ANTHROPIC_DEFAULT_MAX_TOKENS = 4096;
 
-/** Anthropic 协议版本头。标准 API 要求携带 */
-const ANTHROPIC_VERSION = "2023-06-01";
+/**
+ * 非流式请求的超时（毫秒）。只对非流式设：流式下"回答很长"本就是正常情况，
+ * 用同一个总时限会把长回答误杀。非流式是一问一答，卡这么久基本可判为服务端没返回。
+ * 用 AbortSignal.timeout 而不是给整个 fetch 设一个笼统时限——它同时覆盖连接与响应两段。
+ */
+const REQUEST_TIMEOUT_MS = 120_000;
+
 
 /** +chat 的参数 */
 interface ChatOptions {
   model?: string;
   /** 用户输入的文本。来自位置参数，由 action 收拢后填入（无 --message 选项） */
   message?: string;
-  input?: string;
+  /** --input 可重复：多图 / 多视频 / 文本文件，按给出顺序进入 content */
+  input?: string[];
   stream?: boolean;
   search?: boolean;
   responses?: boolean;
@@ -77,6 +85,7 @@ interface ChatOptions {
   apiKey?: string;
   alias?: string;
   area?: string;
+  verbose?: boolean;
 }
 
 /** 解析出的请求目标 */
@@ -84,16 +93,24 @@ interface ResolvedRequest {
   url: string;
   urlChannel: Channel;
   payloadChannel: PayloadShape;
-  useTools: boolean;
+  /**
+   * 联网搜索的写法，随**协议**而定：
+   *   Chat 端点      → web_search_options:{enable:true}
+   *   Responses 端点 → tools:[{type:"web_search"}]
+   *   none           未开搜索
+   */
+  searchForm: "chat_options" | "responses" | "none";
   apiKey: string;
 }
 
-function resolveRequest(opts: ChatOptions, globals: GlobalArgs): ResolvedRequest {
+export function resolveRequest(opts: ChatOptions, globals: GlobalArgs): ResolvedRequest {
   const profile = resolveProfile(globals);
   const site = resolveSite(globals);
-  const region = opts.area ?? DEFAULT_REGION;
+  // --area 有默认值 gz，要区分"用户写了"和"没写"：个人版在国际站只有 sg，没写时改用它
+  const areaGiven = process.argv.includes("--area");
+  const region = !areaGiven && opts.plan ? defaultPlanRegion(opts.plan, site) : opts.area ?? DEFAULT_REGION;
 
-  // --plan 优先级最高：给了就锁定 plan 通道，不受 --responses/--search 影响
+  // URL：--plan 锁定套餐通道；否则 --anthropic / --responses 各选一条，都不给就是 Chat。
   let urlChannel: Channel;
   let keyType: KeyType;
   if (opts.plan) {
@@ -103,19 +120,26 @@ function resolveRequest(opts: ChatOptions, globals: GlobalArgs): ResolvedRequest
     urlChannel = opts.anthropic ? "planAnthropic" : "plan";
     keyType = opts.plan;
   } else {
-    if (opts.anthropic) {
-      throw new Error(t("chat.anthropicNeedsPlan"));
-    }
-    // --search 隐含 --responses 的路由效果
-    urlChannel = opts.responses || opts.search ? "responses" : "chat";
+    urlChannel = opts.anthropic ? "anthropic" : opts.responses ? "responses" : "chat";
     keyType = "th";
   }
 
-  // body 结构独立于 URL：只看 --responses/--search。
-  // 例外是 Anthropic 通道——那条路径只认 Anthropic 的 body 结构，发别的形状
-  // 必然被拒，且报的是字段级错误、看不出根因，所以这里必须跟着 URL 走。
+  // body 形状：--responses 决定 chat / responses；Anthropic 端点自身是第三种形状，跟着 URL 走。
   const payloadChannel: PayloadShape =
-    urlChannel === "planAnthropic" ? "anthropic" : opts.responses || opts.search ? "responses" : "chat";
+    urlChannel === "planAnthropic" || urlChannel === "anthropic"
+      ? "anthropic"
+      : opts.responses
+        ? "responses"
+        : "chat";
+
+  // 联网搜索：Chat 端点用 web_search_options，Responses 端点用 tools。
+  const searchForm: ResolvedRequest["searchForm"] = !opts.search
+    ? "none"
+    : payloadChannel === "responses"
+      ? "responses"
+      : payloadChannel === "chat"
+        ? "chat_options"
+        : "none";
 
   const apiKey =
     opts.apiKey ??
@@ -131,8 +155,8 @@ function resolveRequest(opts: ChatOptions, globals: GlobalArgs): ResolvedRequest
     );
   }
 
-  // plan 通道与数据面不在同一套服务上（国内站个人版走 lkeap），host 要分开解析。
-  // planOriginOf 返回含 scheme 的 origin，因为个别测试集群是 http。
+  // planOriginOf 返回含 scheme 的 origin（按站点/地域解析数据面 host），
+  // 与按量同一套域名；个别测试集群是 http，故保留 scheme。
   const env = resolveEnv();
   const origin =
     urlChannel === "plan" || urlChannel === "planAnthropic"
@@ -142,96 +166,21 @@ function resolveRequest(opts: ChatOptions, globals: GlobalArgs): ResolvedRequest
     url: `${origin.replace(/\/$/, "")}${CHANNEL_PATHS[urlChannel]}`,
     urlChannel,
     payloadChannel,
-    useTools: Boolean(opts.search),
+    searchForm,
     apiKey,
   };
 }
 
-/** 图片扩展名 → MIME，走 image_url 通道 */
-const IMAGE_MIME: Record<string, string> = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".bmp": "image/bmp",
-};
-
-/** 能当纯文本读进 prompt 的扩展名 */
-const TEXT_EXT = new Set([
-  ".txt",
-  ".md",
-  ".json",
-  ".csv",
-  ".log",
-  ".xml",
-  ".yaml",
-  ".yml",
-  ".html",
-  ".js",
-  ".ts",
-  ".py",
-  ".go",
-  ".java",
-  ".c",
-  ".cpp",
-  ".sh",
-]);
-
-/** 把 --input 解析成绝对路径 */
-function resolveInputPath(rawPath: string): string {
-  const cleaned = rawPath.startsWith("@") ? rawPath.slice(1) : rawPath;
-  const resolved = cleaned.startsWith("~") ? path.join(os.homedir(), cleaned.slice(1)) : cleaned;
-  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
-    throw new Error(t("chat.inputMissing", { path: resolved }));
-  }
-  return resolved;
-}
-
 /**
- * 构造 message 的 content。
- *
- * 网关实测行为（2026-08 验证）：/v1/chat/completions 只接受两种内容块——纯 text
- * 和 image_url；任何 file/input_file 结构都被拒（400 invalid params）。所以：
- *   - 图片 → image_url（走视觉通道）
- *   - 文本类文档 → 读出内容拼进 text（网关不认文件块，只能内联）
- *   - 其它二进制（pdf/docx…）→ 明确报错，不发注定失败的请求
+ * 内容构造在 core/chat-content.ts（多输入、URL 透传、视频、三种协议的块结构）。
+ * 这里只负责把告警打到 stderr——stdout 留给回答本身，便于管道处理。
  */
-function buildContent(opts: ChatOptions): unknown {
-  if (!opts.input) {
-    return opts.message ?? "";
+function contentOf(opts: ChatOptions, shape: PayloadShape): unknown {
+  const built = buildChatContent(shape, opts.message, opts.input ?? []);
+  for (const w of built.warnings) {
+    console.error(w);
   }
-
-  const resolved = resolveInputPath(opts.input);
-  const ext = path.extname(resolved).toLowerCase();
-
-  // 图片：走 image_url
-  const imageMime = IMAGE_MIME[ext];
-  if (imageMime) {
-    const dataUrl = `data:${imageMime};base64,${fs.readFileSync(resolved).toString("base64")}`;
-    const parts: Array<Record<string, unknown>> = [];
-    if (opts.message) {
-      parts.push({ type: "text", text: opts.message });
-    }
-    parts.push({ type: "image_url", image_url: { url: dataUrl } });
-    return parts;
-  }
-
-  // 文本类文档：网关不认文件块，把内容内联进 text
-  if (TEXT_EXT.has(ext)) {
-    const fileText = fs.readFileSync(resolved, "utf8");
-    const header = opts.message ? `${opts.message}\n\n` : "";
-    return `${t("chat.fileIntro", { header, name: path.basename(resolved) })}\n\n${fileText}`;
-  }
-
-  // 其它二进制格式当前网关不支持，直接报错而不是发一个注定 400 的请求
-  throw new Error(
-    `${t("chat.unsupportedFile", {
-      ext: ext || t("chat.unsupportedExtFallback"),
-      images: Object.keys(IMAGE_MIME).join("/"),
-      texts: [...TEXT_EXT].slice(0, 5).join("/"),
-    })}\n${t("chat.unsupportedFileFix")}`,
-  );
+  return built.content;
 }
 
 /**
@@ -240,7 +189,6 @@ function buildContent(opts: ChatOptions): unknown {
  *   图片块       {type:"image",source:{type:"base64",media_type,data}}
  *                而不是 OpenAI 的 {type:"image_url",image_url:{url}}
  *   thinking     需要 budget_tokens，且必须小于 max_tokens
- *   工具         Anthropic 的 web_search 工具定义与 OpenAI 不同，暂不支持
  */
 function buildAnthropicPayload(opts: ChatOptions): Record<string, unknown> {
   const maxTokens = Number(opts.maxTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS);
@@ -251,7 +199,7 @@ function buildAnthropicPayload(opts: ChatOptions): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     model: opts.model,
     max_tokens: maxTokens,
-    messages: [{ role: "user", content: buildAnthropicContent(opts) }],
+    messages: [{ role: "user", content: contentOf(opts, "anthropic") }],
   };
   if (opts.stream) {
     payload["stream"] = true;
@@ -266,51 +214,11 @@ function buildAnthropicPayload(opts: ChatOptions): Record<string, unknown> {
   return payload;
 }
 
-/** Anthropic 的 content 块。图片用 base64 source，与 OpenAI 的 image_url 不同 */
-function buildAnthropicContent(opts: ChatOptions): unknown {
-  if (!opts.input) {
-    return opts.message ?? "";
-  }
-  const resolved = resolveInputPath(opts.input);
-  const ext = path.extname(resolved).toLowerCase();
-
-  const imageMime = IMAGE_MIME[ext];
-  if (imageMime) {
-    const parts: Array<Record<string, unknown>> = [];
-    if (opts.message) {
-      parts.push({ type: "text", text: opts.message });
-    }
-    parts.push({
-      type: "image",
-      source: {
-        type: "base64",
-        media_type: imageMime,
-        data: fs.readFileSync(resolved).toString("base64"),
-      },
-    });
-    return parts;
-  }
-
-  if (TEXT_EXT.has(ext)) {
-    const fileText = fs.readFileSync(resolved, "utf8");
-    const header = opts.message ? `${opts.message}\n\n` : "";
-    return `${t("chat.fileIntro", { header, name: path.basename(resolved) })}\n\n${fileText}`;
-  }
-
-  throw new Error(
-    `${t("chat.unsupportedFile", {
-      ext: ext || t("chat.unsupportedExtFallback"),
-      images: Object.keys(IMAGE_MIME).join("/"),
-      texts: [...TEXT_EXT].slice(0, 5).join("/"),
-    })}\n${t("chat.unsupportedFileFix")}`,
-  );
-}
-
 function buildPayload(opts: ChatOptions, req: ResolvedRequest): Record<string, unknown> {
   if (req.payloadChannel === "anthropic") {
     return buildAnthropicPayload(opts);
   }
-  const content = buildContent(opts);
+  const content = contentOf(opts, req.payloadChannel);
   const payload: Record<string, unknown> = { model: opts.model };
 
   if (req.payloadChannel === "responses") {
@@ -320,10 +228,12 @@ function buildPayload(opts: ChatOptions, req: ResolvedRequest): Record<string, u
   }
   payload["stream"] = Boolean(opts.stream);
 
-  if (req.useTools) {
-    payload["tools"] = [
-      { type: "web_search", name: "web_search", description: t("chat.toolSearchDesc") },
-    ];
+  // 联网搜索：按通道选写法（见 resolveRequest.searchForm 的说明）。
+  // Chat API（含 plan 通道）用 web_search_options；Responses API 用 tools 声明搜索工具。
+  if (req.searchForm === "chat_options") {
+    payload["web_search_options"] = { enable: true };
+  } else if (req.searchForm === "responses") {
+    payload["tools"] = [{ type: "web_search" }];
     payload["tool_choice"] = "auto";
   }
   // 深度思考开关。字段名经真实调用验证（见下），不是按惯例猜的：
@@ -533,120 +443,101 @@ function printResponsesOutput(output: Array<Record<string, unknown>>): void {
   }
 }
 
-async function chatCommand(opts: ChatOptions, globals: GlobalArgs): Promise<void> {
+/** 参数校验：模型、内容、地域（地域早拦，免得拼出不存在的 host） */
+function validateChatOptions(opts: ChatOptions, site: string): void {
   if (!opts.model) {
-    throw new Error(
-      t("chat.needModel"),
-    );
+    throw new Error(t("chat.needModel"));
   }
-  if (!opts.message && !opts.input) {
+  if (!opts.message && !opts.input?.length) {
     throw new Error(t("chat.needContent"));
   }
-  if (opts.area && !allowedRegions(resolveSite(globals)).includes(opts.area)) {
-    throw new Error(
-      t("chat.badArea", {
-        site: resolveSite(globals),
-        area: opts.area,
-        options: allowedRegions(resolveSite(globals)).join(", "),
-      }),
-    );
+  // 流式是 SSE 逐块输出，拼不出一个完整 JSON——早点说清，别让 --json 静默失效
+  if (opts.stream && isJson()) {
+    throw new Error(t("chat.jsonNoStream"));
   }
+  const regions = allowedRegions(site);
+  if (opts.area && !regions.includes(opts.area)) {
+    throw new Error(t("chat.badArea", { site, area: opts.area, options: regions.join(", ") }));
+  }
+}
+
+/** 请求头：统一 Bearer，Anthropic 协议另带 anthropic-version，见 core/data-plane.ts */
+function headersOf(req: ResolvedRequest): Record<string, string> {
+  return authHeadersOf(req.payloadChannel === "anthropic" ? "anthropic" : "openai", req.apiKey);
+}
+
+/** 非 2xx：打印网关原始错误、业务码建议与 request_id，返回 request_id 供记日志 */
+async function reportHttpError(resp: Response, url: string, text: string): Promise<string | undefined> {
+  let parsed: Record<string, unknown> | string = text;
+  try {
+    parsed = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    // 非 JSON 错误体，原样透传
+  }
+  const requestId = extractRequestId(resp.headers, typeof parsed === "string" ? undefined : parsed);
+  console.log(t("chat.httpFailed", { status: resp.status, statusText: resp.statusText, url }));
+  console.log(t("chat.errorDetail", { detail: extractErrorDetail(parsed) }));
+  // 业务码已收录时补一条 thcli 侧的修复建议；未收录就不打，避免给出泛泛而谈的噪音
+  const businessCode = extractBusinessCode(parsed);
+  const info = businessCode ? lookupError(businessCode) : undefined;
+  if (businessCode && info) {
+    console.log(`  ${t("error.code", { code: businessCode })}`);
+    console.log(`  ${t("error.fix", { fix: info.fix })}`);
+  }
+  console.log(`Request ID: ${requestId ?? "-"}`);
+  return requestId;
+}
+
+async function chatCommand(opts: ChatOptions, globals: GlobalArgs): Promise<void> {
+  const profile = resolveProfile(globals);
+  const site = resolveSite(globals);
+  validateChatOptions(opts, site);
 
   const req = resolveRequest(opts, globals);
   const payload = buildPayload(opts, req);
-  const profile = resolveProfile(globals);
-  const site = resolveSite(globals);
   const start = Date.now();
+  const log = (status: "ok" | "error", requestId?: string, error?: string, extra?: Record<string, unknown>): void =>
+    logDataPlaneCall(profile, site, { channel: req.urlChannel, requestId, durationMs: Date.now() - start, status, error, extra });
 
+  const headers = headersOf(req);
+  if (opts.verbose) traceRequest("POST", req.url, headers, payload);
   let resp: Response;
   try {
-    // Anthropic 路径额外带协议版本头与 x-api-key：网关是"兼容实现"，标准
-    // Anthropic 客户端用 x-api-key、而本网关 OpenAI 侧用 Bearer，两个都带上
-    // 以覆盖两种校验方式（多余的头不会被拒）。
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${req.apiKey}`,
-      "Content-Type": "application/json",
-    };
-    if (req.payloadChannel === "anthropic") {
-      headers["anthropic-version"] = ANTHROPIC_VERSION;
-      headers["x-api-key"] = req.apiKey;
-    }
-    resp = await fetch(req.url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    });
+    // 非流式才设超时：流式回答可能持续很久，设总时限会误杀正常的长回答
+    const signal = opts.stream ? undefined : AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    resp = await fetch(req.url, { method: "POST", headers, body: JSON.stringify(payload), signal });
   } catch (err) {
-    // 网络层错误：请求根本没到网关，不存在 request_id
-    logDataPlaneCall(profile, site, {
-      channel: req.urlChannel,
-      durationMs: Date.now() - start,
-      status: "error",
-      error: (err as Error).message,
-    });
-    console.log(t("chat.requestFailed", { message: (err as Error).message }));
+    // 网络层错误或超时：请求根本没到网关（或没拿到响应），不存在 request_id
+    const aborted = (err as Error).name === "TimeoutError" || (err as Error).name === "AbortError";
+    log("error", undefined, aborted ? `timeout ${REQUEST_TIMEOUT_MS}ms` : (err as Error).message);
+    console.log(aborted ? t("chat.requestTimeout", { seconds: REQUEST_TIMEOUT_MS / 1000 }) : t("chat.requestFailed", { message: (err as Error).message }));
     console.log(t("chat.noRequestId"));
     return;
   }
 
   if (!resp.ok) {
     const text = await resp.text();
-    let parsed: Record<string, unknown> | string = text;
-    try {
-      parsed = JSON.parse(text) as Record<string, unknown>;
-    } catch {
-      // 非 JSON 错误体，原样透传
-    }
-    const requestId = extractRequestId(
-      resp.headers,
-      typeof parsed === "string" ? undefined : parsed,
-    );
-    logDataPlaneCall(profile, site, {
-      channel: req.urlChannel,
-      requestId,
-      durationMs: Date.now() - start,
-      status: "error",
-      error: `HTTP ${resp.status}`,
-    });
-    console.log(
-      t("chat.httpFailed", { status: resp.status, statusText: resp.statusText, url: req.url }),
-    );
-    console.log(t("chat.errorDetail", { detail: extractErrorDetail(parsed) }));
-    // 业务码已收录时补一条 thcli 侧的修复建议；未收录就不打，避免给出泛泛而谈的噪音
-    const businessCode = extractBusinessCode(parsed);
-    if (businessCode) {
-      const info = lookupError(businessCode);
-      if (info) {
-        console.log(`  ${t("error.code", { code: businessCode })}`);
-        console.log(`  ${t("error.fix", { fix: info.fix })}`);
-      }
-    }
-    console.log(`Request ID: ${requestId ?? "-"}`);
+    if (opts.verbose) traceResponse(resp.status, Date.now() - start, text);
+    log("error", await reportHttpError(resp, req.url, text), `HTTP ${resp.status}`);
     return;
   }
 
   if (opts.stream && resp.body) {
+    // 流式正文是 SSE，--verbose 只打状态行，正文照常逐块输出
+    if (opts.verbose) traceResponse(resp.status, Date.now() - start);
     // 流式下只能从响应头取 request_id（body 是 SSE 流，不能当 JSON 解析）
     const requestId = extractRequestId(resp.headers);
     await printStream(resp.body, req.payloadChannel);
-    logDataPlaneCall(profile, site, {
-      channel: req.urlChannel,
-      requestId,
-      durationMs: Date.now() - start,
-      status: "ok",
-      extra: { model: opts.model, stream: true },
-    });
+    log("ok", requestId, undefined, { model: opts.model, stream: true });
     return;
   }
 
-  const body = (await resp.json()) as Record<string, unknown>;
-  logDataPlaneCall(profile, site, {
-    channel: req.urlChannel,
-    requestId: extractRequestId(resp.headers, body),
-    durationMs: Date.now() - start,
-    status: "ok",
-    extra: { model: opts.model },
-  });
+  const text = await resp.text();
+  if (opts.verbose) traceResponse(resp.status, Date.now() - start, text);
+  const body = JSON.parse(text) as Record<string, unknown>;
+  log("ok", extractRequestId(resp.headers, body), undefined, { model: opts.model });
+  // --json：吐网关原始响应（思考内容、回答、usage 都在里面），供脚本与 Agent 解析
+  if (emitJson(body)) return;
   printOnce(body);
 }
 
@@ -728,7 +619,7 @@ export function registerChatCommands(program: Command, getGlobals: () => GlobalA
     // 也与「选好模型直接执行任务」的设计形态一致
     .argument("[text...]", t("chat.arg.text"))
     .requiredOption("--model <model>", t("chat.opt.model"))
-    .option("--input <path>", t("chat.opt.input"))
+    .option("--input <path>", t("chat.opt.input"), collect)
     .option("--stream", t("chat.opt.stream"))
     .option("--search", t("chat.opt.search"))
     .option("--responses", t("chat.opt.responses"))
@@ -736,6 +627,7 @@ export function registerChatCommands(program: Command, getGlobals: () => GlobalA
     .option("--no-thinking", t("chat.opt.noThinking"))
     .option("--plan <type>", t("chat.opt.plan"))
     .option("--anthropic", t("chat.opt.anthropic"))
+    .option("--verbose", t("chat.opt.verbose"))
     .option("--max-tokens <n>", t("chat.opt.maxTokens"))
     .option("--api-key <key>", t("chat.opt.apiKey"))
     .option("--alias <alias>", t("opt.aliasPick"), DEFAULT_ALIAS)

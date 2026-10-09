@@ -60,6 +60,11 @@ export function splitCsv(value: string): string[] {
   return value.split(/[\s,]+/).filter(Boolean);
 }
 
+/** commander 可重复选项的累加器：`--input a --input b` → ["a", "b"] */
+export function collect(value: string, previous: string[] = []): string[] {
+  return [...previous, value];
+}
+
 /**
  * 解析 JSON 数组参数（--bindings/--quotas/--quotas_desired）。
  * 解析失败明确报错，不把非法输入透传给云 API。

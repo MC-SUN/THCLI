@@ -145,7 +145,7 @@ export function saveCredential(
  * 下游错误——那个错误看起来与登录无关，用户很难联想到「其实是续期没成功」。
  * 所以这里要指名根因、给出下一步动作，而不是留一行不起眼的日志。
  */
-export async function maybeRefreshCredential(profile: string, site: string): Promise<void> {
+export async function maybeRefreshCredential(profile: string, site: string, quiet = false): Promise<void> {
   const path = credentialPath(profile, site);
   let cred: CredentialFile;
   try {
@@ -174,6 +174,7 @@ export async function maybeRefreshCredential(profile: string, site: string): Pro
     saveCredential({ ...info, state: "" }, newCred, profile, site);
   } catch (err) {
     // 走 stderr：--json 模式下 stdout 必须是纯 JSON，混一行人话会让解析失败
+    if (quiet) return;
     const reason = err instanceof Error ? err.message : String(err);
     const expired = (cred.expiresAt ?? 0) - now <= 0;
     console.error(t(expired ? "cred.refreshFailedExpired" : "cred.refreshFailed", { reason }));
