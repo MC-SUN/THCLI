@@ -237,7 +237,7 @@ const PATH_ENV_BY_SITE: Record<string, { callback: string; prefix: string }> = {
 /**
  * 深合并：override 里出现的字段覆盖 base，未出现的保留 base 的值。
  * 对象逐键下钻，数组与标量整体替换；override 为 undefined 时原样返回 base。
- * 用户配置覆盖、agent 写配置、+gen 的 --body 合并共用这一份。
+ * 用户配置覆盖、agent 写配置共用这一份。
  */
 export function deepMerge<T>(base: T, override: unknown): T {
   if (override === null || typeof override !== "object" || Array.isArray(override)) {

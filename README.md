@@ -54,7 +54,6 @@ thcli auth login --browser no
 | `endpoint` | 推理接入点：列表、详情、改配、删除 |
 | `deploy` | 为模型创建推理接入点 |
 | `+chat` | 与模型对话，支持多图 / 视频理解 |
-| `+gen` | 生图 / 生视频 / 生 3D（提交、轮询、下载） |
 | `chat-config` | 本地维护对话用的 API Key |
 | `key` | API 密钥：增删改查、启停、查明文 |
 | `plan` | 企业版套餐（TokenPlan）：购买、续费、专属 Key、用量 |
@@ -143,7 +142,7 @@ thcli +chat --plan tp --model hy3 "你好"           # 用个人版额度对话
 
 购买 / 续费 / 升配暂无开放接口，对应命令会打印控制台链接。
 
-## 多模态理解与生成
+## 多模态理解
 
 图片 / 视频**理解**就是对话：`+chat` 的 `--input` 可重复，本地文件自动 Base64（平台没有上传接口），
 公网 URL 原样透传：
@@ -151,23 +150,6 @@ thcli +chat --plan tp --model hy3 "你好"           # 用个人版额度对话
 ```shell
 thcli +chat --model hy-vision-2.0-instruct --input a.png --input b.png "比较两张图"
 thcli +chat --model kimi-k3 --input https://example.com/clip.mp4 "视频讲了什么"
-```
-
-图片 / 视频 / 3D **生成**用 `+gen`，异步任务自动轮询，`--output` 直接下载（结果地址约 12 小时失效）：
-
-```shell
-thcli +gen models
-thcli +gen image --model hy-image-v3 "一只橙色小猫" --output ./out
-thcli +gen video --model hy-video-v1.5 "小狗在草地上奔跑" --image first.jpg --output ./out
-thcli +gen 3d    --model hy-3d-3.1 "一只卡通小狗" --output ./out
-```
-
-加 `--verbose` 可看到每次请求与原始响应（Key 打码、Base64 截断），便于核对参数。
-
-```shell
-thcli +gen models --model hy-video-v1.5    # 这个模型支持哪些选项、官方调用指南
-thcli +gen status                          # 本机提交过的异步任务（自动刷新状态，找回任务 ID）
-thcli +gen status --task-id <id> --wait --output ./out
 ```
 
 ## Agent 工具一键接入
@@ -229,7 +211,6 @@ thcli +connect --target ~/.some-agent/skills
 | `skills-cache/` | 0644 | `+connect` 下载的 Agent Skills 缓存 |
 | `agent-state.json` | 0600 | `agent install` 的台账：改过哪些文件、备份在哪 |
 | `agent-backups/` | 0600 | `agent install` 写入前的原文件备份 |
-| `gen-tasks.jsonl` | 0600 | `+gen` 提交过的异步任务（任务 ID、模型、提示词开头、状态），`+gen status` 读取 |
 
 `{profile}.configure` 只在 `profile create` 或 `profile set --region` 时才生成；只用
 `auth login` 的 profile 没有这个文件是正常的，`region` 会回退到内置默认。
@@ -261,7 +242,7 @@ thcli doctor error <code>   # 查错误码含义
 ## 计费提醒
 
 会产生费用的命令默认都有二次确认：`plan buy` / `renew` / `upgrade`、`endpoint postpaid on`、
-`deploy`。`+chat` / `+gen` 按量计费（视频与 3D 单次费用较高）。`agent install` 只改本地文件。其余命令为查询类。
+`deploy`。`+chat` 按量计费。`agent install` 只改本地文件。其余命令为查询类。
 
 ## 环境要求
 

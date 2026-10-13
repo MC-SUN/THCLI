@@ -15,8 +15,9 @@
 import { Command } from "commander";
 
 import { type Client } from "../core/client.js";
+import { areaCloudRegion, defaultPlanRegion } from "../core/config.js";
 import { mask, type GlobalArgs, resolveSite } from "../core/credentials.js";
-import { human, printAligned, printTable, verticalChart } from "../core/format.js";
+import { horizontalBars, human, printAligned, printTable, verticalChart } from "../core/format.js";
 import { t, lang } from "../core/i18n.js";
 import {
   buildMonitorClient,
@@ -259,7 +260,7 @@ function granularityOf(window: { startTime: string; endTime: string }): {
   };
 }
 
-/** 一张指标趋势图，形态对齐 usage trend 的卡片 */
+/** 一张指标趋势图。日级（Period≥1 天）横向逐日列出，分钟级用竖向柱状看形状 */
 function renderMetricCard(series: MetricSeries, period: number): void {
   const { meta, timestamps, values } = series;
   console.log(lang() === "en" ? `${meta.label} (${meta.unit})` : `${meta.label}（${meta.unit}）`);
@@ -270,12 +271,25 @@ function renderMetricCard(series: MetricSeries, period: number): void {
     return;
   }
   const fmt = (v: number): string => human(v);
-  const chart = verticalChart(values, (i) => axisLabel(timestamps[i] ?? 0, period), fmt);
-  for (const row of chart.rows) {
-    console.log(row);
+
+  if (period >= DAILY_PERIOD) {
+    // 日级：监控只回有数据的天、且天数少，一天一行最清楚——日期写在行首，不必对横轴刻度
+    const rows = timestamps
+      .map((ts, i) => ({ ts, v: values[i] }))
+      .filter((r): r is { ts: number; v: number } => typeof r.v === "number")
+      .map((r) => ({ label: axisLabel(r.ts, period), value: r.v }));
+    for (const line of horizontalBars(rows, fmt)) {
+      console.log(line);
+    }
+  } else {
+    const chart = verticalChart(values, (i) => axisLabel(timestamps[i] ?? 0, period), fmt);
+    for (const row of chart.rows) {
+      console.log(row);
+    }
+    console.log(chart.axis);
+    console.log(chart.labels);
   }
-  console.log(chart.axis);
-  console.log(chart.labels);
+
   const max = Math.max(...present);
   const min = Math.min(...present);
   const avg = present.reduce((sum, v) => sum + v, 0) / present.length;
@@ -302,8 +316,9 @@ function axisLabel(ts: number, period: number): string {
 /**
  * 取套餐在某指标上的趋势。
  *
- * `TpEPkg*` 按套餐（PkgId）聚合，故维度用 tpepkgid 而不是 uin；套餐未持有时无 PkgId，
- * 直接返回空图。
+ * `TpEPkg*` 按套餐聚合，维度是 `tp_e_uin` + `tp_e_pkgid`（实测：认 ownerUin，
+ * 不是账号 uin；两个维度缺一不可）。而且**只在套餐所在地域有数据**（国内 ap-guangzhou /
+ * 国际 ap-singapore），故监控客户端要按站点套餐地域建，不能沿用凭证默认地域，否则查空。
  */
 async function packageTrend(globals: GlobalArgs, pkg: Row, keys: string[], query: {
   startTime: string;
@@ -311,12 +326,19 @@ async function packageTrend(globals: GlobalArgs, pkg: Row, keys: string[], query
   period: number;
 }): Promise<MetricSeries[]> {
   const pkgId = String(pkg["PkgId"] ?? pkg["ResourceId"] ?? "");
-  const client = await buildMonitorClient(globals);
+  const site = resolveSite(globals);
+  const client = await buildMonitorClient(globals, areaCloudRegion(defaultPlanRegion("tp", site)));
   return Promise.all(
     keys.map((k) => {
       const meta = packageMetricByKey(k);
       return pkgId
-        ? client.fetch(meta, { ...query, extraDimensions: [{ Name: "tpepkgid", Value: pkgId }] })
+        ? client.fetch(meta, {
+            ...query,
+            extraDimensions: [
+              { Name: "tp_e_uin", Value: client.ownerUin },
+              { Name: "tp_e_pkgid", Value: pkgId },
+            ],
+          })
         : Promise.resolve({ meta, timestamps: [], values: [] } as MetricSeries);
     }),
   );

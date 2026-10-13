@@ -52,7 +52,7 @@ export interface MetricMeta {
   uinOnly?: boolean;
   /**
    * 指标体系与 `uin` 那套不同源：查询时**不带 uin 维度**，维度完全由调用方的
-   * extraDimensions 决定（如 `TpEPkg*` 按套餐 `tpepkgid`）。默认 false = 带 uin。
+   * extraDimensions 决定（如 `TpEPkg*` 用 `tp_e_uin` + `tp_e_pkgid`）。默认 false = 带 uin。
    */
   accountScoped?: boolean;
 }
@@ -175,12 +175,12 @@ export const DEFAULT_PERF_KEYS = ["rpm", "error-ratio", "ttft", "latency"];
 /**
  * 个人版 / 企业版 TokenPlan 套餐的用量指标（`TpEPkg*` 前缀）。
  *
- * 两套粒度：总量（Period=86400 得到每日趋势）与每分钟速率（Period=60~300 得到分钟级
+ * 两套粒度：总量（Period=86400 得到每日趋势）与每分钟速率（Period=300 得到分钟级
  * 走势）。Token 与积分各一组，`plan personal usage tokens` / `usage credits` 分别取用。
  *
- * 指标名来自控制台元数据，`TpEPkg` 前缀的 `E` = 企业版？不——实测个人版套餐
- * （ProductType=personal）的用量也归在这套指标下，控制台「个人版用量」页读的就是它。
- * 维度是套餐（PkgId），与上面按 uin 聚合的那套不同源。
+ * 与上面按 uin 聚合那套不同源：维度是 `tp_e_uin`（**ownerUin**，不是账号 uin）+ `tp_e_pkgid`，
+ * 两个都不能少；且只在套餐所在地域有数据（国内 ap-guangzhou / 国际 ap-singapore），
+ * 传错地域会查空。均由 `plan-personal.ts` 的 packageTrend 负责传。
  */
 export const PACKAGE_METRICS: MetricMeta[] = [
   // 每日总量（Period 86400）：只有总量，接口没有"每日输入 / 输出"指标
@@ -376,6 +376,8 @@ export function metricLabel(meta: MetricMeta): { label: string; unit: string } {
 export interface MonitorClient {
   /** 主账号 uin，指标维度要用它 */
   uin: string;
+  /** 主账号 ownerUin（`tp_e_uin` 维度用它——实测套餐指标认 ownerUin，不认账号 uin） */
+  ownerUin: string;
   /** 拉单个指标的时序 */
   fetch(meta: MetricMeta, params: MonitorQuery): Promise<MetricSeries>;
 }
@@ -401,7 +403,7 @@ export interface MonitorQuery {
    */
   filters?: Record<string, string>;
   /**
-   * 额外维度，直接用云监控的维度名（如 `tpepkgid`）。
+   * 额外维度，直接用云监控的维度名（如 `tp_e_uin` / `tp_e_pkgid`）。
    *
    * 给不在这套 uin 维度体系里的指标用（`TpEPkg*` 按套餐聚合）。与 filters 不同，
    * 它不做短名翻译、也不受 uinOnly 影响，由调用方按接口定义拼。
@@ -419,10 +421,16 @@ export function toApiDimension(key: string): string {
 }
 
 /**
- * 建监控客户端。会先查一次 sts:GetCallerIdentity 拿主账号 uin——指标维度是
- * uin，而本地凭证里只有 openId，没有 uin，故必须问一次云端。
+ * 建监控客户端。会先查一次 cam:GetUserAppId 拿主账号 uin / ownerUin——指标维度要用它们，
+ * 而本地凭证里只有 openId，没有 uin，故必须问一次云端。
+ *
+ * `region` 可覆盖：套餐指标（`TpEPkg*`）只在套餐所在地域有数据（国内 ap-guangzhou /
+ * 国际 ap-singapore），传错地域会查空。
  */
-export async function buildMonitorClient(args: GlobalArgs): Promise<MonitorClient> {
+export async function buildMonitorClient(
+  args: GlobalArgs,
+  regionOverride?: string,
+): Promise<MonitorClient> {
   const initial = parseGlobalArgs(args);
   await maybeRefreshCredential(initial.profile, initial.site);
   const cred = parseGlobalArgs(args);
@@ -432,14 +440,14 @@ export async function buildMonitorClient(args: GlobalArgs): Promise<MonitorClien
 
   const clientConfig = {
     credential: { secretId: cred.secretId, secretKey: cred.secretKey, token: cred.token },
-    region: cred.region,
+    region: regionOverride ?? cred.region,
     // agent 见 core/http-agent.ts：按环境配置强制解析集群 IP 并按需放宽证书
     profile: { httpProfile: { agent: agentForEnv(resolveEnv()) } },
   };
 
   // uin 走 cam:GetUserAppId（见 core/identity.ts）而不是 sts:GetCallerIdentity——
   // 后者不接受第三方联合身份的临时密钥，报 AccessKeyNotSupport
-  const { uin } = await resolveIdentity(args);
+  const { uin, ownerUin } = await resolveIdentity(args);
 
   const monitor = new CommonClient(
     cloudApiHostOf(resolveEnv(), MONITOR_PRODUCT),
@@ -453,6 +461,7 @@ export async function buildMonitorClient(args: GlobalArgs): Promise<MonitorClien
 
   return {
     uin,
+    ownerUin,
     async fetch(meta, query) {
       // 指标名与数据并发拉取，二者都就绪后再返回
       await labelsReady;

@@ -23,7 +23,6 @@ import { registerMonitorCommands } from "./commands/monitor.js";
 import { registerUsageCommands } from "./commands/usage.js";
 import { registerAgentCommands } from "./commands/agent.js";
 import { registerConnectCommands } from "./commands/connect.js";
-import { registerGenCommands } from "./commands/gen.js";
 import type { GlobalArgs } from "./core/credentials.js";
 import { initLang, t } from "./core/i18n.js";
 import { setJsonMode } from "./core/output.js";
@@ -138,7 +137,6 @@ registerEndpointCommands(program, getGlobals);
 registerModelCommands(program, getGlobals);
 
 registerChatCommands(program, getGlobals);
-registerGenCommands(program, getGlobals);
 
 registerPlanCommands(program, getGlobals);
 registerUsageCommands(program, getGlobals);

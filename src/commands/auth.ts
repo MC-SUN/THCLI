@@ -144,6 +144,16 @@ async function provisionChatKey(globals: GlobalArgs): Promise<void> {
   }
 }
 
+/** 打印当前站点 / 地域，并给出切换命令——登录时最容易"站错了"，让用户当场自查 */
+function printSiteHint(globals: GlobalArgs): void {
+  const site = resolveSite(globals);
+  const region = parseGlobalArgs(globals).region;
+  const otherSite = allowedSites().find((s) => s !== site) ?? site;
+  console.log(t("auth.login.siteHint", { site, region }));
+  console.log(t("auth.login.siteHintSwitch", { otherSite }));
+  console.log("");
+}
+
 async function loginCommand(opts: { browser?: string }, globals: GlobalArgs): Promise<void> {
   const profile = resolveProfile(globals);
   const site = resolveSite(globals);
@@ -151,6 +161,8 @@ async function loginCommand(opts: { browser?: string }, globals: GlobalArgs): Pr
     console.error(t("auth.login.badSite", { site, options: allowedSites().join(", ") }));
     process.exit(1);
   }
+
+  printSiteHint(globals);
 
   // state 用于防 CSRF：回调带回来的必须与本地生成的一致
   const state = randomBytes(8).toString("hex");

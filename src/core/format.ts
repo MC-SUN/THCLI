@@ -230,6 +230,34 @@ export function verticalChart(
   return { rows, axis, labels };
 }
 
+/** 横向柱状的八分之一块（从左往右填） */
+const H_BLOCKS = ["▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"] as const;
+
+/**
+ * 横向柱状：每行一个数据点（标签 + 条 + 数值）。
+ *
+ * 适合「点少、但每个点都要对上标签」的场景——按日趋势一天一行、日期写在行首，
+ * 不像竖向图那样把 N 根细柱挤成一排、横轴只标得下两三个刻度而对不上。
+ * 按峰值线性缩放，0 值画空；标签与数值各自对齐。
+ */
+export function horizontalBars(
+  rows: Array<{ label: string; value: number }>,
+  formatValue: (value: number) => string,
+  barCells = 24,
+): string[] {
+  const peak = rows.reduce((m, r) => Math.max(m, r.value), 0);
+  const labelW = rows.reduce((m, r) => Math.max(m, displayWidth(r.label)), 0);
+  const valW = rows.reduce((m, r) => Math.max(m, formatValue(r.value).length), 0);
+  return rows.map((r) => {
+    const cells = peak > 0 ? (r.value / peak) * barCells : 0;
+    const full = Math.floor(cells);
+    const frac = cells - full;
+    const cap = frac > 0.05 ? H_BLOCKS[Math.max(0, Math.round(frac * 8) - 1)] : "";
+    const bar = ("█".repeat(full) + cap).padEnd(barCells);
+    return `  ${pad(r.label, labelW)}  ${bar}  ${formatValue(r.value).padStart(valW)}`;
+  });
+}
+
 /** 堆叠图的一个系列 */
 export interface StackSeries {
   name: string;
