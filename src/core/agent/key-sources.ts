@@ -1,5 +1,5 @@
 /**
- * agent install 三种通道的 Key 来源（供 key-picker 使用）。
+ * equip 完整接入三种通道的 Key 来源（供 key-picker 使用）。
  *
  *   按量 th     该地域的 API Key 列表；云端 Key 按地域分池，云 API 地域由 --area 换算
  *   企业版 tp-ep 某个套餐下的专属 Key；套餐也按地域分（ap-guangzhou / ap-singapore 各一份列表）

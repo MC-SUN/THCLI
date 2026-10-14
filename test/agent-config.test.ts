@@ -19,7 +19,7 @@ import { hasExtension, installCommandOf, isInstalled, toolOf } from "../src/core
 import { allowedModelsOf } from "../src/core/agent/key-sources.js";
 import { checkModels, scopeToKey } from "../src/commands/agent.js";
 import { matchesMasked, parsePicks } from "../src/core/agent/key-picker.js";
-import { claudeTiersOf, CONFIGURATORS, type ConfigureInput, probeConfig, protocolOf } from "../src/core/agent/configurators.js";
+import { claudeTiersOf, CONFIGURATORS, type ConfigureInput, protocolOf } from "../src/core/agent/configurators.js";
 import {
   type AgentEnv,
   mergeById,
@@ -283,17 +283,13 @@ describe("可逆性", () => {
     assert.equal(read(".claude/settings.json"), original);
   });
 
-  it("status 读台账里记录的实际路径（CODEX_HOME 等覆盖下文件不在 ~/.codex）", () => {
+  it("codex 的主配置路径尊重 CODEX_HOME 覆盖（文件不在 ~/.codex）", () => {
     const custom = path.join(env.home, "custom-codex");
     process.env["CODEX_HOME"] = custom;
     try {
       const s = new WriteSession(env, false);
       const out = CONFIGURATORS["codex"]!(input(th()), s);
-      const record = { tool: "codex", plan: "th", site: "cn", baseUrl: out.baseUrl, defaultModel: "", models: [], configuredAt: "", files: s.files, mainFile: out.mainFile };
-      assert.equal(record.mainFile, path.join(custom, "config.toml"));
-      assert.equal(probeConfig(record), "ok");
-      fs.writeFileSync(record.mainFile!, "model = \"other\"\n");
-      assert.equal(probeConfig(record), "changed");
+      assert.equal(out.mainFile, path.join(custom, "config.toml"));
     } finally {
       delete process.env["CODEX_HOME"];
     }
@@ -303,8 +299,6 @@ describe("可逆性", () => {
     const s = new WriteSession(env, false);
     const out = CONFIGURATORS["openclaw"]!(input(th()), s);
     assert.equal(out.mainFile, path.join(env.home, ".openclaw", "openclaw.json"));
-    const record = { tool: "openclaw", plan: "th", site: "cn", baseUrl: out.baseUrl, defaultModel: "", models: [], configuredAt: "", files: s.files, mainFile: out.mainFile };
-    assert.equal(probeConfig(record), "ok");
   });
 
   it("claudeTiersOf 按所选顺序填档位，默认模型在 fable，不足的用默认模型", () => {

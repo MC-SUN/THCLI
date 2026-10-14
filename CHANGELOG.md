@@ -16,12 +16,15 @@
   套餐 / 模型 / 共享 Key / 调用明细都在 tokenhub 产品下，按 `product` 参数区分系列；
   用量趋势走云监控的 `TpEPkg*` 指标。调用明细时间为 RFC3339（`--from/--to` 同格式）。
   购买 / 续费 / 升配 / 建删 Key 涉及开通购买，打印控制台链接。
-- **Agent 一键接入**：`thcli agent install|list|models|status|restore` 与简写 `thcli equip`，
+- **Agent 一键接入**：`thcli equip`。两条路径：`thcli equip install [tool...]` 只把 Agent 程序装到本机
+  （`npm install -g`），不登录、不选通道 / Key / 模型、不写任何配置（help 里排在最前）；裸 `thcli equip [tool...]`
+  完整接入——缺程序的先装，再写服务地址、API Key、模型列表。另有 `equip list`（支持的工具与检测结果）、
+  `equip restore`（按台账还原配置）。
   支持 Claude Code、Codex、CodeBuddy Code、OpenCode、OpenClaw、Kimi Code、Pi、WorkBuddy、Kilo Code 写配置，
   Cursor、Cline、Roo Code、Trae 打印界面入口与填写项（按官方接入文档）；模型列表按云 API → 官方文档 → 内置快照回退；
   写前备份、台账可还原。Agent 用的 Key 从云端列表选择 / 新建 / 粘贴或 `--api-key` 传入，与 thcli 本地 Key 互不相干；
   模型按所选 Key 的绑定范围列出，交互多选（第一个为默认），Claude Code 的 fable / opus / sonnet / haiku 档位按所选顺序填写；
-  所选 Agent 未安装时询问后用 `npm install -g <包名>` 安装最新版（与官方一致，不改 Agent 自己的自动更新）；是否已安装以 `<命令> --version` 的输出判断；
+  完整接入时所选 Agent 未安装会询问后用 `npm install -g <包名>` 安装最新版（与官方一致，不改 Agent 自己的自动更新）；是否已安装以 `<命令> --version` 的输出判断；
   WorkBuddy 等桌面应用未安装时不写配置，提示先下载安装再接入。
   Codex 的 Key 写在 `config.toml` 的 `experimental_bearer_token`（0600），不设环境变量、不改 shell rc。
   Codex 另写一份只含所选 TokenHub 模型的模型目录（`model_catalog_json`），`/model` 菜单里只出现这些模型；接入后自动重启 Codex 后台服务（app-server daemon），IDE 插件 / 桌面端新会话即用新配置。
@@ -35,7 +38,7 @@
 - `auth login` 会打印当前站点与云 API 地域，并给出切换命令（`site use` / `profile set --region`），便于登录时核对是否站错了。
 - `+chat --anthropic` 不再要求 `--plan`：按量走 `/v1/messages`，与 `--plan` 同用仍走 `/plan/anthropic/v1/messages`。
 - 数据面鉴权头统一为 `Authorization: Bearer`（含 Anthropic 协议，另带 `anthropic-version`），不再发 `x-api-key`。
-  `+chat`、`agent` 验证共用 `core/data-plane.ts`。
+  `+chat`、`equip` 验证共用 `core/data-plane.ts`。
 - `+chat` 新增 `--verbose`：把实际请求（URL、请求头、请求体）与原始响应打到 stderr，Key 打码、Base64 截断。
 - `+chat --json`（非流式）：输出网关原始响应（思考内容 / 回答 / usage 都在内），便于脚本与 Agent 解析；与 `--stream` 同用会报错（SSE 拼不出完整 JSON）。
 - `+chat` 非流式请求超时 120 秒（`AbortSignal.timeout`），超时给出明确提示；流式不设总时限，避免误杀长回答。

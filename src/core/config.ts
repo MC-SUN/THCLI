@@ -261,9 +261,11 @@ export function loadConfig(): ThcliConfig {
   }
   let merged: ThcliConfig = DEFAULT_CONFIG;
 
-  // 第 2 层：用户配置文件按字段局部覆盖
+  // 第 2 层：用户配置文件按字段局部覆盖。
+  // 路径默认 ~/.thcli/config.json，可用 THCLI_CONFIG 覆盖（测试隔离、或临时指到别处）。
+  const configPath = process.env["THCLI_CONFIG"] || USER_CONFIG_PATH;
   try {
-    const raw = fs.readFileSync(USER_CONFIG_PATH, "utf8");
+    const raw = fs.readFileSync(configPath, "utf8");
     merged = deepMerge(merged, JSON.parse(raw));
   } catch {
     // 文件不存在或格式不对都退回上一层，不让配置问题挡住所有命令

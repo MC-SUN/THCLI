@@ -8,7 +8,7 @@
  * 通用规则：
  *   - 一律合并写入，只动我们的 provider / 键，用户其它配置原样保留
  *   - 含 API Key 明文的文件 0600
- *   - 所有写入经 WriteSession：先备份、记台账，agent restore 可还原
+ *   - 所有写入经 WriteSession：先备份、记台账，equip restore 可还原
  */
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -22,7 +22,6 @@ import {
   readJsonArray,
   readJsonObject,
   toJson,
-  type ToolRecord,
   type WriteSession,
 } from "./files.js";
 import {
@@ -114,7 +113,7 @@ function dropStale(list: unknown[], previous: string[], current: string[], key =
  * 否则首次启动会进 Anthropic 登录引导、绕不过去。
  *
  * 这个文件是 Claude Code 自己的状态文件（项目历史、会话等，随时在改），所以不走 WriteSession：
- * 纳入台账的话 agent restore 会把它整体回滚到接入前，抹掉期间的全部状态。只在没设过时补这一个字段，
+ * 纳入台账的话 equip restore 会把它整体回滚到接入前，抹掉期间的全部状态。只在没设过时补这一个字段，
  * 卸载时保留（它只表示"已完成首次引导"，留着无害）。返回是否需要 / 做了改动。
  */
 function markOnboarded(s: WriteSession): boolean {
@@ -564,18 +563,4 @@ export function guiGuide(tool: ToolSpec, input: ConfigureInput, maskedKey: strin
 /** 工具使用的接口协议：只有 Claude Code 走 Anthropic，其余都是 OpenAI 兼容 */
 export function protocolOf(tool: string): WireProtocol {
   return tool === "claude-code" ? "anthropic" : "openai";
-}
-
-/**
- * 判断已接入工具的主配置是否仍指向记录的 base URL（status 用）。
- * 读台账里记录的实际路径——CODEX_HOME / KIMI_CODE_HOME 等覆盖下文件不在 ~/ 默认位置。
- */
-export function probeConfig(record: ToolRecord): "ok" | "changed" | "missing" {
-  const file = record.mainFile ?? record.files[0]?.path;
-  if (!file) return "missing";
-  try {
-    return fs.readFileSync(file, "utf8").includes(record.baseUrl) ? "ok" : "changed";
-  } catch {
-    return "missing";
-  }
 }

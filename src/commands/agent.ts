@@ -1,17 +1,16 @@
 /**
- * agent：把 TokenHub 的模型一键接入本地 Agent 工具（Claude Code / Codex / CodeBuddy …）。
+ * equip：把 TokenHub 的模型一键接入本地 Agent 工具（Claude Code / Codex / CodeBuddy …）。
  *
  * 与 +connect 互补：+connect 把 thcli 的 skills 装进 Agent（让 Agent 会用 thcli）；
- * agent install 改 Agent 的模型配置（让 Agent 用 TokenHub 的模型）。
+ * equip 改 Agent 的模型配置（让 Agent 用 TokenHub 的模型）。
  *
- *   thcli agent install [tool...]   接入（= thcli equip）
- *   thcli agent list                支持的工具与检测结果
- *   thcli agent models              当前账号可接入的模型（不写文件）
- *   thcli agent status              已接入的工具与当前指向
- *   thcli agent restore [tool...]   按台账还原配置（不卸载 Agent 程序）
+ *   thcli equip [tool...]           接入（完整：登录 → 选工具 → 选通道/Key/模型 → 写配置 → 验证）
+ *   thcli equip install [tool...]   只装 Agent 程序（npm install -g），不登录、不写配置
+ *   thcli equip list                支持的工具与检测结果
+ *   thcli equip restore [tool...]   按台账还原配置（不卸载 Agent 程序）
  *
- * install / models 要求先登录：Key 与模型列表都按账号从云 API 取，未登录给出登录引导后退出。
- * install 的顺序：登录 → 选 Agent → 定通道与地域 → 选 Key → 选模型（Key 能调的范围内）→ 汇总确认 → 安装缺失的 Agent → 写入 → 验证。
+ * 接入 / models 要求先登录：Key 与模型列表都按账号从云 API 取，未登录给出登录引导后退出。
+ * 接装的顺序：登录 → 选 Agent → 定通道与地域 → 选 Key → 选模型（Key 能调的范围内）→ 汇总确认 → 安装缺失的 Agent → 写入 → 验证。
  * 选 Agent 放在取 Key 之前：选错或一个都没检测到时，不该先去云端建 Key / 取明文。
  * Agent 的 Key 只从云端来源选（或 --api-key / 粘贴），与 thcli 自己的本地 keystore（+chat 用）互不相干。
  */
@@ -51,7 +50,6 @@ import {
   CONFIGURATORS,
   type ConfigureInput,
   guiGuide,
-  probeConfig,
   protocolOf,
 } from "../core/agent/configurators.js";
 import {
@@ -671,6 +669,58 @@ function printInstallResults(results: Row[], dryRun: boolean): void {
   console.log("");
 }
 
+/**
+ * 纯安装：只把 Agent 程序装到本机（`npm install -g <包名>`），不登录、不选通道 / Key / 模型、不写任何配置文件。
+ * 与完整接入（裸 equip）互补：适合"先把工具装好、配置之后再说"，或换机后先批量装工具。
+ */
+async function installOnlyCommand(names: string[], opts: { yes?: boolean }): Promise<void> {
+  const env = defaultAgentEnv();
+  const tools = await selectTools(names, { yes: opts.yes } as InstallOptions, env);
+  const results: Row[] = [];
+  let failed = false;
+  for (const tool of tools) {
+    const row: Row = { Tool: tool.key, Name: tool.name, Mode: tool.mode };
+    if (isInstalled(tool, env)) {
+      row["Skipped"] = true;
+    } else if (!installCommandOf(tool)) {
+      // 桌面应用 / 编辑器扩展没有 npm 包，thcli 装不了
+      row["Manual"] = true;
+    } else {
+      const cmd = installCommandOf(tool)!;
+      if (await confirm(t("agent.install.confirm", { name: tool.name, cmd: cmd.join(" ") }), opts.yes, true)) {
+        if (runInstall(cmd, env.platform)) {
+          row["Installed"] = true;
+        } else {
+          row["Error"] = t("agent.result.installFailed", { cmd: cmd.join(" ") });
+          failed = true;
+        }
+      } else {
+        row["NotInstalled"] = t("agent.result.notInstalled");
+      }
+    }
+    results.push(row);
+  }
+
+  if (emitJson({ Install: results })) {
+    if (failed) process.exitCode = 3;
+    return;
+  }
+  if (!results.some((r) => r["Installed"])) console.log("");
+  for (const r of results) {
+    if (r["Error"]) {
+      console.log(t("agent.result.failed", { name: r["Name"], reason: r["Error"] }));
+      continue;
+    }
+    if (r["Installed"]) console.log(t("agent.installOnly.installed", { name: r["Name"] }));
+    else if (r["Skipped"]) console.log(t("agent.installOnly.present", { name: r["Name"] }));
+    else if (r["Manual"]) console.log(t("agent.installOnly.manual", { name: r["Name"] }));
+    else console.log(t("agent.installOnly.skipped", { name: r["Name"] }));
+  }
+  console.log("");
+  console.log(t("agent.installOnly.next"));
+  if (failed) process.exitCode = 3;
+}
+
 function listCommand(): void {
   const env = defaultAgentEnv();
   const rows = TOOLS.map((tool) => ({
@@ -688,41 +738,6 @@ function listCommand(): void {
     rows.map((r) => [r.Tool, r.Name, t(`agent.mode.${r.Mode}`), r.Installed ? "✓" : "-", r.Config ?? t("agent.mode.guiHint")]),
   );
   console.log(t("agent.list.footer"));
-}
-
-async function modelsCommand(opts: InstallOptions, globals: GlobalArgs): Promise<void> {
-  const scoped = await resolveSiteChoice(globals);
-  await requireLogin(scoped, resolveSite(scoped));
-  const plan = parsePlan(opts.plan);
-  const series: Series = opts.series === "hy" ? "hy" : "common";
-  const site = resolveSite(scoped);
-  const region = regionOf(plan, site, opts.area);
-  const endpoint = resolveEndpoint(plan, site, region, resolveEnv());
-  const teamId = plan === "tp-ep" ? await chooseTeam(region, opts, scoped) : undefined;
-  const catalog = await loadCatalog(plan, series, site, region, { ...opts, teamId }, scoped);
-  const def = catalog.models[0] ?? "";
-  if (emitJson({ Plan: plan, Site: site, Endpoint: endpoint, Source: catalog.source, Detail: catalog.detail, DefaultModel: def, Models: catalog.models })) {
-    return;
-  }
-  console.log(t("agent.summary.endpoint", { plan, site, base: endpoint.origin }));
-  console.log(t("agent.models.source", { source: t(`agent.source.${catalog.source}`), detail: catalog.detail }));
-  for (const m of catalog.models) console.log(`  ${m}${m === def ? `  ${t("agent.models.default")}` : ""}`);
-}
-
-function statusCommand(): void {
-  const env = defaultAgentEnv();
-  const rows = Object.values(loadState(env).tools).map((r) => ({ ...r, Live: probeConfig(r) }));
-  if (emitJson(rows.map((r) => ({ Tool: r.tool, Plan: r.plan, Site: r.site, BaseUrl: r.baseUrl, DefaultModel: r.defaultModel, Models: r.models.length, ConfiguredAt: r.configuredAt, Live: r.Live, Files: r.files.map((f) => f.path) })))) {
-    return;
-  }
-  if (!rows.length) {
-    console.log(t("agent.status.none"));
-    return;
-  }
-  printTable(
-    [t("agent.col.tool"), t("agent.col.plan"), t("agent.col.model"), t("agent.col.base"), t("agent.col.live"), t("agent.col.at")],
-    rows.map((r) => [r.tool, `${r.plan}/${r.site}`, r.defaultModel, r.baseUrl, t(`agent.live.${r.Live}`), r.configuredAt.slice(0, 19)]),
-  );
 }
 
 /** 还原一个工具；返回还原失败的路径 */
@@ -754,7 +769,7 @@ async function restoreCommand(names: string[], opts: { yes?: boolean }): Promise
   }
 }
 
-/** install 的选项定义（agent install 与 equip 共用） */
+/** 完整接入的选项定义（裸 equip 用） */
 function withInstallOptions(cmd: Command): Command {
   return cmd
     .argument("[tools...]", t("agent.arg.tools"))
@@ -770,36 +785,27 @@ function withInstallOptions(cmd: Command): Command {
     .option("--yes", t("opt.yes"));
 }
 
-/** 装配 agent 与 equip */
-export function registerAgentCommands(program: Command, getGlobals: () => GlobalArgs): void {
-  const agent = program.command("agent").description(t("group.agent.desc"));
+/** 装配 equip */
+export function registerEquipCommands(program: Command, getGlobals: () => GlobalArgs): void {
+  const equip = program.command("equip").description(t("group.equip.desc"));
 
-  withInstallOptions(agent.command("install").description(t("agent.install.desc"))).action(
-    async (tools: string[], opts: InstallOptions) => installCommand(tools, opts, getGlobals()),
-  );
+  // help 里排最前：只装程序，不动配置，不需要登录
+  equip
+    .command("install")
+    .description(t("agent.installOnly.desc"))
+    .argument("[tools...]", t("agent.arg.tools"))
+    .option("--yes", t("opt.yes"))
+    .action(async (tools: string[], opts: { yes?: boolean }) => installOnlyCommand(tools, opts));
 
-  agent.command("list").description(t("agent.list.desc")).action(() => listCommand());
+  equip.command("list").description(t("agent.list.desc")).action(() => listCommand());
 
-  agent
-    .command("models")
-    .description(t("agent.models.desc"))
-    .option("--plan <plan>", t("agent.opt.plan"), "th")
-    .option("--series <series>", t("agent.opt.series"))
-    .option("--team-id <id>", t("agent.opt.teamId"))
-    .option("--area <area>", t("agent.opt.area"))
-    .action(async (opts: InstallOptions) => modelsCommand(opts, getGlobals()));
-
-  agent.command("status").description(t("agent.status.desc")).action(() => statusCommand());
-
-  agent
+  equip
     .command("restore")
     .description(t("agent.restore.desc"))
     .argument("[tools...]", t("agent.arg.tools"))
     .option("--yes", t("opt.yes"))
     .action(async (tools: string[], opts: { yes?: boolean }) => restoreCommand(tools, opts));
 
-  // 短别名：thcli equip = thcli agent install（需求里提到的"更简短的指令"）
-  withInstallOptions(program.command("equip").description(t("agent.equip.desc"))).action(
-    async (tools: string[], opts: InstallOptions) => installCommand(tools, opts, getGlobals()),
-  );
+  // 裸 equip = 完整接入
+  withInstallOptions(equip).action(async (tools: string[], opts: InstallOptions) => installCommand(tools, opts, getGlobals()));
 }

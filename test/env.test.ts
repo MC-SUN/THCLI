@@ -36,6 +36,12 @@ import { resolveEnv } from "../src/core/credentials.js";
 const CLI = path.join(process.cwd(), "dist", "main.cjs");
 let home: string;
 
+// 本进程内直接调 loadConfig() 的用例（下方 describe("内置环境") 等）必须与本机真实
+// ~/.thcli/config.json 隔离——否则"只内置 prod"会被用户本地声明的环境顶翻。把
+// THCLI_CONFIG 指到一个不存在的文件，loadConfig 读不到就只剩内置 DEFAULT_CONFIG。
+// 子进程（run()）不继承这个变量，仍用它自己临时 HOME 下的 config.json。
+process.env["THCLI_CONFIG"] = path.join(os.tmpdir(), "thcli-no-such-config.json");
+
 /**
  * 一份自定义环境配置。刻意用文档示例网段（RFC 5737 的 203.0.113.0/24）而不是
  * 真实集群 IP——测试文件同样会随开源公开。
@@ -62,9 +68,12 @@ function run(args: string[], config?: unknown): string {
     );
   }
   try {
+    // 子进程用自己的临时 HOME 下的 config.json，不能继承父进程为隔离设的 THCLI_CONFIG
+    const childEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, THCLI_LANG: "" };
+    delete childEnv["THCLI_CONFIG"];
     return execFileSync("node", [CLI, ...args], {
       encoding: "utf8",
-      env: { ...process.env, HOME: home, THCLI_LANG: "" },
+      env: childEnv,
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 60_000,
     });

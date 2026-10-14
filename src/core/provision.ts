@@ -5,7 +5,7 @@
  *   best-effort：此时管控凭证已落盘、登录已经成功，这一步任何失败都只返回提示文案，
  *   不影响登录结果。用固定名字做幂等，避免每次登录都新建一把。
  * - listDataPlaneKeys / revealDataPlaneKey / createDataPlaneKey / storeDataPlaneKey：
- *   agent install 让用户挑选、新建 Key 时用。
+ *   equip 完整接入让用户挑选、新建 Key 时用。
  *
  * 云端 API Key 按地域分开：同一账号在 ap-guangzhou、ap-singapore 下的 Key 列表不同，
  * Key 只能在所属地域的网关用。所以这里的每个函数都按数据面地域（gz / sg）换算成

@@ -65,7 +65,7 @@ thcli auth login --browser no
 | `site` | 站点：国内站 `cn` / 国际站 `intl` |
 | `lang` | 界面语言（`zh` / `en`） |
 | `+connect` | 把 Agent Skills 注入本地 Agent |
-| `agent` / `equip` | 把 TokenHub 模型一键接入 Claude Code、Codex、CodeBuddy 等工具 |
+| `equip` | 把 TokenHub 模型一键接入 Claude Code、Codex、CodeBuddy 等工具（`equip install` 只装程序，`equip` 完整接入） |
 
 任何一层都可以 `--help`：
 
@@ -154,17 +154,17 @@ thcli +chat --model kimi-k3 --input https://example.com/clip.mp4 "视频讲了�
 
 ## Agent 工具一键接入
 
-`thcli agent install`（简写 `thcli equip`）把服务地址、API Key、模型列表写进本地 Agent 工具的配置。
-**需要先登录**（`thcli auth login`）：Key 与可用模型都按账号获取。
+`thcli equip` 把服务地址、API Key、模型列表写进本地 Agent 工具的配置（完整接入）。
+**完整接入需要先登录**（`thcli auth login`）：Key 与可用模型都按账号获取。
+只想先把工具装上、配置以后再说，用 `thcli equip install`——只跑 `npm install -g`，不登录、不写配置。
 
 ```shell
-thcli agent list                                  # 支持的工具与检测结果
-thcli agent models --plan tp --series hy          # 当前账号可接入的模型
-thcli agent install claude-code codex --dry-run   # 预览要改的文件
-thcli agent install claude-code codex             # 按量后付费（--plan th，默认）
+thcli equip install claude-code codex             # 只装程序，不登录、不写配置
+thcli equip list                                  # 支持的工具与检测结果
+thcli equip claude-code codex --dry-run           # 预览要改的文件
+thcli equip claude-code codex                     # 完整接入，按量后付费（--plan th，默认）
 thcli equip codex --plan tp                       # 个人版套餐
-thcli agent status                                # 已接入的工具与当前指向
-thcli agent restore codex                       # 还原到接入前
+thcli equip restore codex                         # 还原到接入前
 ```
 
 写配置：Claude Code、Codex、CodeBuddy Code、OpenCode、OpenClaw、Kimi Code、Pi、WorkBuddy、Kilo Code；
@@ -209,8 +209,8 @@ thcli +connect --target ~/.some-agent/skills
 | `config.json` | 0644 | 可选，按字段局部覆盖内置基础设施配置 |
 | `log/` | 0600 | 调用日志，见下 |
 | `skills-cache/` | 0644 | `+connect` 下载的 Agent Skills 缓存 |
-| `agent-state.json` | 0600 | `agent install` 的台账：改过哪些文件、备份在哪 |
-| `agent-backups/` | 0600 | `agent install` 写入前的原文件备份 |
+| `agent-state.json` | 0600 | `equip` 完整接入的台账：改过哪些文件、备份在哪 |
+| `agent-backups/` | 0600 | `equip` 完整接入写入前的原文件备份 |
 
 `{profile}.configure` 只在 `profile create` 或 `profile set --region` 时才生成；只用
 `auth login` 的 profile 没有这个文件是正常的，`region` 会回退到内置默认。
@@ -242,7 +242,7 @@ thcli doctor error <code>   # 查错误码含义
 ## 计费提醒
 
 会产生费用的命令默认都有二次确认：`plan buy` / `renew` / `upgrade`、`endpoint postpaid on`、
-`deploy`。`+chat` 按量计费。`agent install` 只改本地文件。其余命令为查询类。
+`deploy`。`+chat` 按量计费。`equip` 只改本地文件。其余命令为查询类。
 
 ## 环境要求
 

@@ -63,7 +63,7 @@ export async function fetchPersonalKeySecret(
 }
 
 /**
- * 把个人版 Key 写进本地 keystore 的 tp/default，+chat --plan tp 与 agent install 直接可用。
+ * 把个人版 Key 写进本地 keystore 的 tp/default，+chat --plan tp 与 equip --plan tp 直接可用。
  * 地域取该站点套餐网关所在地（国内 gz / 国际 sg）：国际站没有广州的套餐网关，
  * 存到 gz 会让 +chat --plan tp --area sg 找不到 Key。
  */

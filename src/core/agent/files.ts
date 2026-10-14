@@ -2,7 +2,7 @@
  * agent 接入的文件层：写前备份、台账、JSON 深合并、失败回滚。
  *
  * 可逆性是硬约束：每个被改动的文件都记进台账（原本是否存在、备份在哪），
- * `agent restore` 据此还原——原本存在的拷回备份，原本不存在的删掉。
+ * `equip restore` 据此还原——原本存在的拷回备份，原本不存在的删掉。
  *
  * HOME 与 thcli 配置目录都可注入（AgentEnv），测试用临时目录，绝不碰真实配置。
  */
@@ -45,7 +45,7 @@ export interface ToolRecord {
   models: string[];
   configuredAt: string;
   files: FileRecord[];
-  /** 主配置文件的实际路径（尊重 CODEX_HOME 等覆盖），status 读它判断是否仍指向 TokenHub */
+  /** 主配置文件的实际路径（尊重 CODEX_HOME 等覆盖）：含 baseUrl 的那个文件，记作接入产物元数据 */
   mainFile?: string;
 }
 
@@ -108,7 +108,7 @@ export class WriteSession {
    * 写一个文件。首次写入前做备份；同一会话内重复写同一文件只备份一次。
    *
    * 重复执行 install 时，台账里该文件已有记录 → 沿用最初的 existed/backup，
-   * 这样 agent restore 永远回到"第一次接入之前"，而不是上一次接入之后。
+   * 这样 equip restore 永远回到"第一次接入之前"，而不是上一次接入之后。
    */
   write(file: string, content: string, secure = false): void {
     this.snapshot(file);

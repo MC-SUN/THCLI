@@ -1,5 +1,5 @@
 /**
- * agent install 的 API Key 选择：按量 / 个人版 / 企业版共用一套交互。
+ * equip 完整接入的 API Key 选择：按量 / 个人版 / 企业版共用一套交互。
  *
  * 三种通道的 Key 来源不同，用 KeySource 抽象：
  *   按量 th    该地域的 API Key 列表（云端按地域分池），可新建
