@@ -25,7 +25,6 @@ import {
   displayWidth,
   human,
   pad,
-  sparkline,
   stackedChart,
   type StackSeries,
   verticalChart,
@@ -347,8 +346,6 @@ async function rankCommand(opts: Record<string, string>, globals: GlobalArgs): P
   const offset = Number(params["Offset"] ?? 0);
   // 第一个指标即主指标（tokens 下是 TotalToken，search 下是搜索次数）
   const primary = metricKeys[0] ?? "TotalToken";
-  // 分页时图表与排行榜只覆盖本页，与全量汇总不是一个范围——必须显式说明
-  const paged = !opts["showAll"] && total > topList.length;
 
   // 图表只是这些数据的可视化，底层本来就是结构化的。两个响应都给出来：
   // Overview 是全量排行（无时序），TopList/Timestamps 是本页的时序明细。

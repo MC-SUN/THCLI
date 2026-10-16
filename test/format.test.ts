@@ -19,10 +19,12 @@ import {
   human,
   pad,
   printTable,
+  printWrappedTable,
   sparkline,
   splitCsv,
   stackedChart,
   verticalChart,
+  wrapCell,
 } from "../src/core/format.js";
 
 /** 抓住 printTable 的 console.log 输出 */
@@ -292,5 +294,26 @@ describe("printTable", () => {
   it("空表也只打表头，不抛错", () => {
     const lines = capture(() => printTable(["A", "B"], []));
     assert.equal(lines.length, 1);
+  });
+});
+
+describe("wrapCell / printWrappedTable", () => {
+  it("wrapCell 优先在分隔符后断开，找不到再硬断；CJK 按 2 列算", () => {
+    assert.deepEqual(wrapCell("wand/vidu/reference-to-video", 18), ["wand/vidu/", "reference-to-video"]);
+    assert.deepEqual(wrapCell("abcdefghij", 4), ["abcd", "efgh", "ij"]);
+    assert.deepEqual(wrapCell("镜头从猫推向窗外风景", 8), ["镜头从猫", "推向窗外", "风景"]);
+    assert.deepEqual(wrapCell("", 5), [""]);
+  });
+
+  it("列宽受上限约束，超长折行、其他列续行留空；ID 不截断；maxLines 超出以 … 截断", () => {
+    const id = "1308104797-WandVideo-d72206b93b95476aa9ed646b5b8bc61d";
+    const lines = capture(() =>
+      printWrappedTable(["ID", "PROMPT", "END"], [[id, "一二三四五六七八九十", "x"]], [{ max: 32 }, { max: 6, maxLines: 2 }, {}]),
+    );
+    assert.equal(lines.length, 3);
+    assert.equal(lines.slice(1).map((l) => l.slice(0, 32).trim()).join(""), id);
+    assert.ok(lines.every((l) => displayWidth(l) <= 32 + 1 + 6 + 1 + 3));
+    assert.match(lines[2]!, /…/);
+    assert.equal(lines[2]!.trimEnd().endsWith("x"), false);
   });
 });

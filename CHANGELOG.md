@@ -9,6 +9,21 @@
 
 ### 新增
 
+- **+gen 排障**：`+gen` 调用失败时与 `+chat` 一样输出错误说明、错误码、修复建议与 Request ID（原来只抛原始 JSON），
+  未开后付费（`401007` / `401008`）直接提示 `thcli models activate <本次模型>`；错误说明按当前语言取中 / 英文。
+  `thcli doctor model --id <模型>` 新增 `--area` / `--alias`，对 +gen 模型追加按量调用诊断：对应的 +gen 接口；沿请求链路查模型是否下线（预下线提示迁移）、
+  与模型同名的默认接入点是否运行（VIRTUAL / INACTIVE 带停止原因给出恢复办法）、能否计费（剩余免费额度或已开后付费，有免费额度时不再误报未开后付费）；
+  本地按量 Key（与 +gen 同样按 --area / --alias 定位）按打码前后缀对上云端那把（不取明文），检查启用状态、范围是否含该模型、额度是否用完，
+  给出逐接口的 `+gen` 写法与补齐步骤（扩大 Key 范围的命令直接带齐现有绑定目标）；非 +gen 模型保持原有输出。
+  `+gen` 报 Key、范围、后付费类错误（401002 / 401006 / 401007 / 401008 / 403002）时附一行可直接执行的上述诊断命令。
+  `401006` 的说明补上「Key 的可访问范围不含该模型」（实测网关对范围外模型返回 401006），`401002` 补上「Key 已停用」，
+  `401001` 的修复命令改为 `chat-config set`（原 `auth set --type` 不存在）。
+- **厂商错误码**：按《厂商错误码说明》收录 PixVerse / Kling / Vidu / MiniMax / MiniMax H3 的错误码（含平台侧按厂商格式返回的值），
+  `+gen` 在提交期（HTTP 非 2xx，或 2xx 但响应是厂商错误格式）与生成期（任务失败）都按厂商字段定位错误，
+  输出厂商原文、厂商错误码说明、修复建议与 Request ID（此前提交失败只打原始 JSON、生成期失败拿不到原因）；
+  `+gen resource`（Kling 主体 / 音色）同样按 Kling 错误码表展示。
+  网关错误补读 `upstream_code` / `upstream_status`、限流的 `Retry-After`、Anthropic 协议的 `reqid`。
+  `thcli doctor error <码>` 在平台码之外也查厂商码（同值码跨厂商全部列出），`--vendor <厂商>` 列出某厂商全部收录。
 - **个人版套餐**：`thcli plan personal`（通用 / Hy Token Plan）——持有状态、可用模型、套餐详情、
   用量趋势（`usage tokens` / `usage credits`，`--range today|7day|30day` 默认 7day，或 `--from/--to`；
   粒度随跨度自动：≤3 天出分钟级总量 / 输入 / 输出，更长按日只出总量）、
@@ -16,6 +31,12 @@
   套餐 / 模型 / 共享 Key / 调用明细都在 tokenhub 产品下，按 `product` 参数区分系列；
   用量趋势走云监控的 `TpEPkg*` 指标。调用明细时间为 RFC3339（`--from/--to` 同格式）。
   购买 / 续费 / 升配 / 建删 Key 涉及开通购买，打印控制台链接。
+- **生成**：`thcli +gen <接口ID> --<字段> <值>`，参数按接口组织、flag 名即官方请求体字段名；共 35 个接口，
+  覆盖混元 / Seedream / WAND / Vidu / Kling / PixVerse / MiniMax 的生图、生视频、3D、世界模型与语音、音乐（按量计费）。
+  子命令：`models [接口ID]`（接口列表 / 单接口完整参数）、`status <接口ID> <任务ID>`、`tasks`、`resource`（Kling 主体 / 音色）；
+  `thcli +gen <接口ID> --help` 只输出该接口的用法与参数，`thcli +gen help <子命令|接口ID>` 同义。
+  任意字段都可用 `--param key=value`（字符串）/ `key:=json`（JSON）或 `--body <json|@文件>` 覆盖，优先级：接口参数 < `--param` < `--body`；
+  `--dry-run` 只打印最终请求。异步任务自动轮询，`--output` 下载结果；同步接口发请求前打印"正在生成"提示。
 - **Agent 一键接入**：`thcli equip`。两条路径：`thcli equip install [tool...]` 只把 Agent 程序装到本机
   （`npm install -g`），不登录、不选通道 / Key / 模型、不写任何配置（help 里排在最前）；裸 `thcli equip [tool...]`
   完整接入——缺程序的先装，再写服务地址、API Key、模型列表。另有 `equip list`（支持的工具与检测结果）、
@@ -32,14 +53,18 @@
   某个 Agent 写到一半失败时，本次写过的文件自动恢复原样；界面型 Agent 只显示打码 Key，确认后才显示完整 Key。
   企业专业版的模型取自所在地域的 `DescribeTokenPlanModelList`（只含在线模型），轻享版为 `auto`。
 - 配套 skills（thcli-agent）在 tokenhub-cli-skills 仓库发布。
+- 配套 skills：生成类 `thcli-image` / `thcli-video` / `thcli-audio` / `thcli-world`（随仓库 `skills/` 发布）。
+- 本机提交过的异步生成任务记在 `~/.thcli/gen-tasks.jsonl`（0600，不含 Key 与结果地址）；`+gen tasks` 列出本机任务
+  并自动刷新未完成的状态（最多 4 个并发，跳过提交超过 24 小时的），用来找回任务 ID；
+  `+gen status <接口ID> <任务ID>` 对本机任务可省 `--model`，并沿用提交时的账号 / 站点 / 地域。
 
 ### 变更
 
 - `auth login` 会打印当前站点与云 API 地域，并给出切换命令（`site use` / `profile set --region`），便于登录时核对是否站错了。
 - `+chat --anthropic` 不再要求 `--plan`：按量走 `/v1/messages`，与 `--plan` 同用仍走 `/plan/anthropic/v1/messages`。
 - 数据面鉴权头统一为 `Authorization: Bearer`（含 Anthropic 协议，另带 `anthropic-version`），不再发 `x-api-key`。
-  `+chat`、`equip` 验证共用 `core/data-plane.ts`。
-- `+chat` 新增 `--verbose`：把实际请求（URL、请求头、请求体）与原始响应打到 stderr，Key 打码、Base64 截断。
+  `+chat`、`+gen`、`equip` 验证共用 `core/data-plane.ts`。
+- `+chat` / `+gen` 新增 `--verbose`：把实际请求（URL、请求头、请求体）与原始响应打到 stderr，Key 打码、Base64 截断。
 - `+chat --json`（非流式）：输出网关原始响应（思考内容 / 回答 / usage 都在内），便于脚本与 Agent 解析；与 `--stream` 同用会报错（SSE 拼不出完整 JSON）。
 - `+chat` 非流式请求超时 120 秒（`AbortSignal.timeout`），超时给出明确提示；流式不设总时限，避免误杀长回答。
 - `+chat --input` 可重复（多图 / 多视频），支持视频理解（`video_url`）与公网 URL 透传；

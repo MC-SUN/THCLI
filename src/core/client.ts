@@ -23,9 +23,6 @@ import { t } from "./i18n.js";
 import { maybeRefreshCredential } from "./oauth.js";
 import { logControlPlaneCall } from "./telemetry.js";
 
-/** tokenhub 云 API 版本 */
-export const TOKENHUB_VERSION = "2026-03-22";
-
 /** 测试网关要求携带的账号头，见 config.ts 的 EnvConfig.requiresUserId */
 const USER_ID_HEADER = "X-Qcloud-User-Id";
 

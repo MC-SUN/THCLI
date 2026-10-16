@@ -6,7 +6,7 @@
  * CLI 与接入的工具走同一种鉴权，排查时只有一种情况要看。
  * Anthropic 协议另需 anthropic-version 头（协议版本，不是鉴权）。
  *
- * +chat、agent 的连通性验证共用这一份。
+ * +chat、+gen、equip 的连通性验证共用这一份。
  */
 
 /** 数据面协议 */

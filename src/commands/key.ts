@@ -67,13 +67,6 @@ function cycleUnit(code: string): string {
   return label.startsWith("key.cycle.") ? code : label;
 }
 
-/** 额度记录的 Status 码。1=正常、5=已用尽（实测值） */
-/** 额度状态码 → 显示名，文案在 locales（key.quotaStatus.*）。未收录的原样回显 */
-function quotaStatusName(code: number): string {
-  const label = t(`key.quotaStatus.${code}`);
-  return label.startsWith("key.quotaStatus.") ? String(code) : label;
-}
-
 /** 把一条额度记录渲染成「已用/总量（百分比）」 */
 function quotaUsage(q: Record<string, unknown>): { text: string; exceeded: boolean } {
   const used = Number(q["CycleUsed"] ?? 0);

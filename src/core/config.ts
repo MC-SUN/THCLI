@@ -150,10 +150,8 @@ export const DEFAULT_CLOUD_REGION = "ap-guangzhou";
 //	cn       100038427476   https://cli.cloud.tencent.com   /oauth        ""
 //	intl     200038425648   https://cli.cloud.tencent.com   /oauth        ""
 //
-// 公共后端两站共用同一地址，由请求体里的 Site 参数区分。取值来源：
 // 公共后端两站共用同一地址，由请求体里的 Site 参数区分。切换无需改码，用
-// THCLI_AUTH_APP_ID /
-// THCLI_AUTH_BACKEND / THCLI_AUTH_CALLBACK_PATH / THCLI_AUTH_PATH_PREFIX 覆盖
+// THCLI_AUTH_APP_ID / THCLI_AUTH_BACKEND / THCLI_AUTH_CALLBACK_PATH / THCLI_AUTH_PATH_PREFIX 覆盖
 // （四个须成组一起给）。
 //
 // 数据面 chatHost 由两个独立维度拼成，不是"国内站只有国内地域"那种嵌套关系：
@@ -234,10 +232,13 @@ const PATH_ENV_BY_SITE: Record<string, { callback: string; prefix: string }> = {
   intl: { callback: "THCLI_AUTH_CALLBACK_PATH_INTL", prefix: "THCLI_AUTH_PATH_PREFIX_INTL" },
 };
 
+/** 会改写对象原型链的键名：合并与解析用户 JSON（--param / --body）时一律剔除，防原型污染 */
+export const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 /**
  * 深合并：override 里出现的字段覆盖 base，未出现的保留 base 的值。
  * 对象逐键下钻，数组与标量整体替换；override 为 undefined 时原样返回 base。
- * 用户配置覆盖、agent 写配置共用这一份。
+ * 用户配置覆盖、equip 写配置、+gen 的 --param / --body 分层合并共用这一份。
  */
 export function deepMerge<T>(base: T, override: unknown): T {
   if (override === null || typeof override !== "object" || Array.isArray(override)) {
@@ -245,6 +246,8 @@ export function deepMerge<T>(base: T, override: unknown): T {
   }
   const result: Record<string, unknown> = { ...(base as Record<string, unknown>) };
   for (const [key, value] of Object.entries(override as Record<string, unknown>)) {
+    // 会改写原型链的键名一律跳过（JSON.parse 会把 "__proto__" 解析成普通自有属性，赋值时才生效）
+    if (UNSAFE_KEYS.has(key)) continue;
     const current = result[key];
     result[key] =
       current !== null && typeof current === "object" && !Array.isArray(current)
@@ -331,17 +334,17 @@ export function apiEndpointOf(env: string): string | undefined {
   return process.env["THCLI_API_ENDPOINT"] || envConfigOf(env).apiEndpoint;
 }
 
+/** 该环境要强制解析到的 IP，无则返回 undefined（走正常 DNS） */
+export function cloudApiHostIpOf(env: string): string | undefined {
+  return envConfigOf(env).cloudApiHostIp;
+}
+
 /**
  * 是否对该环境跳过 TLS 校验。
  *
  * 缺省环境（prod）永远返回 false，无论配置里写了什么——把"漏到生产"从"取决于
  * 用户别配错"变成代码层面不可能。
  */
-/** 该环境要强制解析到的 IP，无则返回 undefined（走正常 DNS） */
-export function cloudApiHostIpOf(env: string): string | undefined {
-  return envConfigOf(env).cloudApiHostIp;
-}
-
 export function insecureTlsOf(env: string): boolean {
   if (env === DEFAULT_ENV) {
     return false;
@@ -418,6 +421,11 @@ const AREA_CLOUD_REGIONS: Record<string, string> = {
 /** 数据面地域对应的云 API 地域；未知地域按缺省（ap-guangzhou）。 */
 export function areaCloudRegion(area: string): string {
   return AREA_CLOUD_REGIONS[area] ?? DEFAULT_CLOUD_REGION;
+}
+
+/** areaCloudRegion 的反查：云 API 地域对应的数据面地域；未知地域按缺省（gz）。 */
+export function cloudRegionArea(region: string | undefined): string {
+  return (Object.entries(AREA_CLOUD_REGIONS).find(([, cloud]) => cloud === region)?.[0] ?? DEFAULT_REGION) as string;
 }
 
 /**

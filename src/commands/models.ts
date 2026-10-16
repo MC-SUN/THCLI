@@ -634,23 +634,6 @@ interface FreeTrialInfo {
   ValidityDays?: number;
 }
 
-/** 把 all / 逗号列表解析成模型 ID 集合；all 时用 picker 从全量里挑 */
-async function resolveModelIds(
-  raw: string | undefined,
-  globals: GlobalArgs,
-  picker: (models: Model[]) => Model[],
-): Promise<{ ids: string[]; all: boolean }> {
-  if (raw && raw.toLowerCase() !== "all") {
-    return { ids: splitCsv(raw), all: false };
-  }
-  if (!raw) {
-    return { ids: [], all: false };
-  }
-  // all：拉全量模型再按 picker 过滤，避免让用户手抄一长串 ID
-  const models = await fetchAllModels(globals);
-  return { ids: picker(models).map((m) => m.ModelId ?? "").filter(Boolean), all: true };
-}
-
 /** 端点的付费状态字段，用于算「哪些模型还没开按量付费」 */
 interface EndpointPaymentState {
   ModelId?: string;

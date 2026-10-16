@@ -39,9 +39,22 @@ export const IMAGE_MIME: Record<string, string> = {
 export const VIDEO_MIME: Record<string, string> = {
   ".mp4": "video/mp4",
   ".mov": "video/quicktime",
+  ".m4v": "video/x-m4v",
   ".webm": "video/webm",
   ".mkv": "video/x-matroska",
   ".avi": "video/x-msvideo",
+};
+
+/** 音频扩展名 → MIME（+gen audio 的 --input 本地文件用） */
+export const AUDIO_MIME: Record<string, string> = {
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".flac": "audio/flac",
+  ".m4a": "audio/mp4",
+  ".aac": "audio/aac",
+  ".ogg": "audio/ogg",
+  ".opus": "audio/opus",
+  ".pcm": "audio/pcm",
 };
 
 /** 能当纯文本读进 prompt 的扩展名（网关不认文件块，只能内联） */

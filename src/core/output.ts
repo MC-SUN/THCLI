@@ -99,7 +99,7 @@ export function traceResponse(status: number, durationMs: number, text?: string)
 }
 
 /** 超长字符串（data URL / 裸 Base64）只留开头 */
-function redactLong(body: unknown): string {
+export function redactLong(body: unknown): string {
   return JSON.stringify(
     body,
     (_k, v: unknown) =>

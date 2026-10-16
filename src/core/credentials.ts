@@ -74,15 +74,6 @@ export interface ResolvedCredential {
   raw: CredentialFile;
 }
 
-function readTrimmedFile(path: string): string | undefined {
-  try {
-    const value = fs.readFileSync(path, "utf8").trim();
-    return value || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * profile 优先级：命令行 > 环境变量 THCLI_PROFILE > active_profile 文件 > "default"。
  * profile 只决定读哪个凭证文件，不影响命令行/环境变量两层。

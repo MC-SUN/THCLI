@@ -1,7 +1,7 @@
 import { t } from "./i18n.js";
 
 /**
- * 输出格式化共用件：定宽列、CSV 拆分、JSON 数组参数解析、枚举翻译。
+ * 输出格式化共用件：定宽列、表格（自适应 / 定宽折行）、终端图表、CSV 拆分、JSON 数组参数解析、枚举翻译。
  */
 
 /** CJK 及全角字符范围，用于计算终端显示宽度 */
@@ -373,21 +373,85 @@ export function printAligned(rows: Array<[string, string]>): void {
  * ID 是要拿去复制粘贴的主键，宁可行宽超出终端换行，也不能截断——截断让整列失去
  * 用途。所以这里不接受固定宽度：调用方给数据，宽度由内容算出来。
  *
- * 最后一列不补空格，避免行尾拖一串没用的空白。
+ * 最后一列不补空格，避免行尾拖一串没用的空白。要限制行宽用 printWrappedTable（折行不截断）。
  */
 export function printTable(headers: string[], rows: string[][]): void {
-  const widths = headers.map((h, i) =>
-    Math.max(displayWidth(h), ...rows.map((r) => displayWidth(r[i] ?? ""))),
-  );
-  const line = (cells: string[]): string =>
-    cells
-      .map((c, i) => (i === cells.length - 1 ? c : pad(c, widths[i] as number)))
-      .join(" ")
-      .trimEnd();
-  console.log(line(headers));
-  for (const row of rows) {
-    console.log(line(row));
+  // 不设列宽上限时，列宽 = 最长内容，不会折行
+  printWrappedTable(headers, rows, []);
+}
+
+/** 折行时优先在这些字符之后断开（ID、路径、模型名里的自然分隔） */
+const WRAP_BREAK_AFTER = new Set(["/", "-", "_", ".", ",", " ", "，", "、"]);
+
+/**
+ * 把文本按显示宽度折成多行，每行不超过 width 列。
+ * 优先在分隔符后断开（断点不早于半行，避免切出很短的碎行），找不到再硬断。
+ */
+export function wrapCell(text: string, width: number): string[] {
+  if (width <= 0) return [text];
+  const lines: string[] = [];
+  let cur: string[] = [];
+  let curWidth = 0;
+  for (const ch of text) {
+    const w = charWidth(ch);
+    if (curWidth + w > width && cur.length) {
+      let cut = -1;
+      let prefix = 0;
+      for (let i = 0; i < cur.length; i++) {
+        prefix += charWidth(cur[i]!);
+        if (WRAP_BREAK_AFTER.has(cur[i]!) && prefix * 2 >= width) cut = i + 1;
+      }
+      const head = cut > 0 ? cur.slice(0, cut) : cur;
+      const rest = cut > 0 ? cur.slice(cut) : [];
+      lines.push(head.join("").trimEnd());
+      cur = rest;
+      curWidth = rest.reduce((n, c) => n + charWidth(c), 0);
+    }
+    cur.push(ch);
+    curWidth += w;
   }
+  if (cur.length || !lines.length) lines.push(cur.join(""));
+  return lines;
+}
+
+/** printWrappedTable 的列约束：max 列宽上限（不给 = 按内容自适应）；maxLines 最多折几行，超出截断标 … */
+export interface WrapColumn {
+  max?: number;
+  maxLines?: number;
+}
+
+/**
+ * 定宽折行表格：每列宽度 = min(上限, 最长内容)，且不小于表头；超宽内容在本列内折行，
+ * 其他列在续行留空，整行宽度固定不随内容变长。ID 列折行而不截断，内容完整（要复制整串可用 --json）。
+ */
+export function printWrappedTable(headers: string[], rows: string[][], columns: WrapColumn[]): void {
+  const widths = headers.map((h, i) => {
+    const content = Math.max(0, ...rows.map((r) => displayWidth(r[i] ?? "")));
+    const max = columns[i]?.max;
+    return Math.max(displayWidth(h), max === undefined ? content : Math.min(max, content));
+  });
+  const print = (cells: string[]): void => {
+    const wrapped = cells.map((c, i) => {
+      const lines = wrapCell(c ?? "", widths[i]!);
+      const maxLines = columns[i]?.maxLines;
+      if (maxLines === undefined || lines.length <= maxLines) return lines;
+      // 末行接上被丢弃的内容再按列宽截断：pad 超宽时会截断并以 … 结尾
+      const kept = lines.slice(0, maxLines);
+      kept[maxLines - 1] = pad(lines.slice(maxLines - 1).join(" "), widths[i]!).trimEnd();
+      return kept;
+    });
+    const height = Math.max(...wrapped.map((l) => l.length));
+    for (let n = 0; n < height; n++) {
+      console.log(
+        wrapped
+          .map((l, i) => (i === wrapped.length - 1 ? (l[n] ?? "") : pad(l[n] ?? "", widths[i]!)))
+          .join(" ")
+          .trimEnd(),
+      );
+    }
+  };
+  print(headers);
+  for (const row of rows) print(row);
 }
 
 /**
@@ -401,6 +465,18 @@ export function printTable(headers: string[], rows: string[][]): void {
 export function stopReasonAdvice(reason: string, endpointId?: string): string {
   const label = t(`stopReason.${reason}`, { id: endpointId ?? "<ID>" });
   return label.startsWith("stopReason.") ? "" : label;
+}
+
+/** 接入点的免费额度藏在 ChargeDetail 这个 JSON 字符串里（endpoint get 与 doctor model 共用） */
+export function parseFreeQuota(chargeDetail: string | undefined): Record<string, unknown> | undefined {
+  if (!chargeDetail) return undefined;
+  try {
+    const parsed = JSON.parse(chargeDetail) as Record<string, unknown>;
+    return (parsed["FreeQuota"] as Record<string, unknown> | undefined) ?? undefined;
+  } catch {
+    // 后端返回的不是合法 JSON 时静默跳过，不影响主体信息展示
+    return undefined;
+  }
 }
 
 /** 分页汇总行，各列表命令统一用它 */

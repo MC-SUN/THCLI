@@ -154,7 +154,3 @@ export function placeholdersOf(template: string): string[] {
   return [...template.matchAll(/\{(\w+)\}/g)].map((m) => m[1] as string).sort();
 }
 
-/** 语言相关的数字/单位习惯：英文用逗号分隔千位，中文沿用现状 */
-export function localeNumber(value: number): string {
-  return lang() === "en" ? value.toLocaleString("en-US") : String(value);
-}

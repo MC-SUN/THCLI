@@ -27,3 +27,7 @@ npm-debug.log*
 # 操作系统噪音
 .DS_Store
 Thumbs.db
+
+skills/
+tools/
+assets/

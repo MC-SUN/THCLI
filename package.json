@@ -40,13 +40,13 @@
     "agent-skills",
     "tokenhub"
   ],
-  "dependencies": {},
   "devDependencies": {
     "@types/node": "^22.10.2",
     "commander": "^12.1.0",
     "tencentcloud-sdk-nodejs-tokenhub": "^4.1.294",
     "tsup": "^8.5.0",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "undici": "^6.29.1"
   },
   "license": "Apache-2.0"
 }

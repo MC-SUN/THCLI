@@ -54,6 +54,7 @@ thcli auth login --browser no
 | `endpoint` | 推理接入点：列表、详情、改配、删除 |
 | `deploy` | 为模型创建推理接入点 |
 | `+chat` | 与模型对话，支持多图 / 视频理解 |
+| `+gen` | 生图 / 生视频 / 生 3D / 语音（提交、轮询、下载；按量计费） |
 | `chat-config` | 本地维护对话用的 API Key |
 | `key` | API 密钥：增删改查、启停、查明文 |
 | `plan` | 企业版套餐（TokenPlan）：购买、续费、专属 Key、用量 |
@@ -142,7 +143,7 @@ thcli +chat --plan tp --model hy3 "你好"           # 用个人版额度对话
 
 购买 / 续费 / 升配暂无开放接口，对应命令会打印控制台链接。
 
-## 多模态理解
+## 多模态理解与生成
 
 图片 / 视频**理解**就是对话：`+chat` 的 `--input` 可重复，本地文件自动 Base64（平台没有上传接口），
 公网 URL 原样透传：
@@ -150,6 +151,26 @@ thcli +chat --plan tp --model hy3 "你好"           # 用个人版额度对话
 ```shell
 thcli +chat --model hy-vision-2.0-instruct --input a.png --input b.png "比较两张图"
 thcli +chat --model kimi-k3 --input https://example.com/clip.mp4 "视频讲了什么"
+```
+
+图片 / 视频 / 3D / 语音**生成**用 `+gen <接口ID>`，异步任务自动轮询，`--output` 直接下载（结果地址约 12 小时失效）。
+参数按接口组织：每个接口的参数就是官方接口的请求体字段，flag 名即字段名（下划线换连字符）；数组传 JSON 数组、对象传 JSON 对象，可收 Base64 的字段传本地路径会自动编码：
+
+```shell
+thcli +gen models                                                  # 列全部接口
+thcli +gen wand/hunyuan-image/v3-generation --prompt "一只橙色小猫" --output ./out
+thcli +gen wand/hunyuan-video/generation --prompt "小狗在草地上奔跑" --image ./first.jpg --output ./out
+thcli +gen api/3d/submit --model hy-3d-3.1 --prompt "一只卡通小狗" --output ./out
+thcli +gen wand/si-image/generation --model seedream-image-v5.0-pro --prompt "猫" --images '["./a.png"]' --size 2K
+```
+
+加 `--verbose` 可看到每次请求与原始响应（Key 打码、Base64 截断），`--dry-run` 只打印最终请求体不发请求，便于核对参数。
+
+```shell
+thcli +gen wand/vidu/text-to-video --help             # 该接口的全部参数、适用模型、官方调用指南
+thcli +gen status wand/vidu/text-to-video <任务ID> --wait --output ./out
+thcli +gen tasks                                      # 列出本机提交过的异步任务（忘了任务 ID 时用）
+thcli +gen wand/si-image/generation --model seedream-image-v5.0-pro --prompt 猫 --param new_field:=1 --dry-run   # 任意字段可用 --param / --body 覆盖
 ```
 
 ## Agent 工具一键接入
@@ -211,6 +232,7 @@ thcli +connect --target ~/.some-agent/skills
 | `skills-cache/` | 0644 | `+connect` 下载的 Agent Skills 缓存 |
 | `agent-state.json` | 0600 | `equip` 完整接入的台账：改过哪些文件、备份在哪 |
 | `agent-backups/` | 0600 | `equip` 完整接入写入前的原文件备份 |
+| `gen-tasks.jsonl` | 0600 | `+gen` 提交过的异步任务（任务 ID、接口、模型、提示词开头、状态），`+gen status` / `+gen tasks` 读取 |
 
 `{profile}.configure` 只在 `profile create` 或 `profile set --region` 时才生成；只用
 `auth login` 的 profile 没有这个文件是正常的，`region` 会回退到内置默认。
@@ -222,7 +244,7 @@ thcli +connect --target ~/.some-agent/skills
 | 文件 | 内容 |
 |---|---|
 | `{profile}.{site}.tokenhub-plugin-console.log` | 管控面：云 API 调用的 action、request_id、耗时、成败 |
-| `{profile}.{site}.tokenhub-plugin-chat.log` | 数据面：`+chat` 的模型、通道、耗时、成败 |
+| `{profile}.{site}.tokenhub-plugin-chat.log` | 数据面：`+chat` / `+gen` 的模型、通道、耗时、成败 |
 
 只记录调用元信息，**从不记录请求参数与响应体**，密钥不会落进日志。单文件超 5MB
 轮转一份 `.1` 备份，旧备份被下次轮转覆盖。日志写失败不影响命令本身。
@@ -233,8 +255,10 @@ thcli +connect --target ~/.some-agent/skills
 
 ```shell
 thcli doctor                # 全链路（等同 thcli doctor all）
+thcli doctor model --id <模型>   # 模型是否存在、接入点；+gen 模型另查模型是否下线、默认接入点是否运行、能否计费（免费额度 / 后付费）、本地按量 Key 能否调它（启用 / 范围 / 额度），给出 +gen 写法
+thcli doctor model --id <模型> --area sg --alias video   # 查 +gen 加同样 --area / --alias 时用的那把按量 Key
 thcli doctor key --id <ak-xxx>   # 单查某把 Key
-thcli doctor error <code>   # 查错误码含义
+thcli doctor error <code>   # 查错误码含义（含 +gen 场景的改法）；--vendor <厂商> 查厂商错误码
 ```
 
 `doctor` 全部只读，不会改任何配置或产生费用。
@@ -242,7 +266,7 @@ thcli doctor error <code>   # 查错误码含义
 ## 计费提醒
 
 会产生费用的命令默认都有二次确认：`plan buy` / `renew` / `upgrade`、`endpoint postpaid on`、
-`deploy`。`+chat` 按量计费。`equip` 只改本地文件。其余命令为查询类。
+`deploy`。`+chat` / `+gen` 按量计费（视频与 3D 单次费用较高）。`equip` 只改本地文件。其余命令为查询类。
 
 ## 环境要求
 

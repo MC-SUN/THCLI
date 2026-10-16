@@ -37,7 +37,7 @@ import { authHeadersOf } from "../core/data-plane.js";
 import { collect } from "../core/format.js";
 import { emitJson, isJson, traceRequest, traceResponse } from "../core/output.js";
 import { logDataPlaneCall } from "../core/telemetry.js";
-import { lookupError } from "../core/errors.js";
+import { extractRequestId, gatewayErrorLines, parseGatewayBody } from "../core/errors.js";
 import { t } from "../core/i18n.js";
 
 /**
@@ -253,47 +253,6 @@ function buildPayload(opts: ChatOptions, req: ResolvedRequest): Record<string, u
   return payload;
 }
 
-/** 从响应头/体里提取网关真实返回的 request_id，客户端从不自己生成 */
-function extractRequestId(headers: Headers, body?: Record<string, unknown>): string | undefined {
-  const fromHeader = headers.get("x-request-id") ?? headers.get("x-trace-id");
-  if (fromHeader) return fromHeader;
-  if (!body) return undefined;
-  if (typeof body["id"] === "string") return body["id"];
-  const error = body["error"] as Record<string, unknown> | undefined;
-  if (error && typeof error["request_id"] === "string") return error["request_id"];
-  const resp = body["Response"] as Record<string, unknown> | undefined;
-  if (resp && typeof resp["RequestId"] === "string") return resp["RequestId"];
-  return undefined;
-}
-
-/**
- * 从网关错误体里取业务码（`error.code`，六位数字，与 HTTP 状态码独立）。
- *
- * 网关的 message 已含修复建议，但那是面向 HTTP 调用方的通用话术；取到码后可以再补一条
- * 带 thcli 命令的建议，省去用户另开一次 doctor error。
- */
-function extractBusinessCode(body: Record<string, unknown> | string): string | undefined {
-  if (typeof body === "string") return undefined;
-  const error = body["error"] as Record<string, unknown> | undefined;
-  const code = error?.["code"];
-  if (typeof code === "string") return code;
-  if (typeof code === "number") return String(code);
-  return undefined;
-}
-
-function extractErrorDetail(body: Record<string, unknown> | string): string {
-  if (typeof body === "string") return body;
-  const error = body["error"] as Record<string, unknown> | undefined;
-  if (error) {
-    const msg = error["message_zh"] ?? error["message"];
-    if (typeof msg === "string") return msg;
-  }
-  const resp = body["Response"] as Record<string, unknown> | undefined;
-  const respError = resp?.["Error"] as Record<string, unknown> | undefined;
-  if (respError && typeof respError["Message"] === "string") return respError["Message"];
-  return JSON.stringify(body);
-}
-
 /** 流式：逐块打印。各通道的 chunk 结构不同 */
 async function printStream(
   body: ReadableStream<Uint8Array>,
@@ -468,23 +427,11 @@ function headersOf(req: ResolvedRequest): Record<string, string> {
 
 /** 非 2xx：打印网关原始错误、业务码建议与 request_id，返回 request_id 供记日志 */
 async function reportHttpError(resp: Response, url: string, text: string): Promise<string | undefined> {
-  let parsed: Record<string, unknown> | string = text;
-  try {
-    parsed = JSON.parse(text) as Record<string, unknown>;
-  } catch {
-    // 非 JSON 错误体，原样透传
-  }
+  const parsed = parseGatewayBody(text);
   const requestId = extractRequestId(resp.headers, typeof parsed === "string" ? undefined : parsed);
   console.log(t("chat.httpFailed", { status: resp.status, statusText: resp.statusText, url }));
-  console.log(t("chat.errorDetail", { detail: extractErrorDetail(parsed) }));
   // 业务码已收录时补一条 thcli 侧的修复建议；未收录就不打，避免给出泛泛而谈的噪音
-  const businessCode = extractBusinessCode(parsed);
-  const info = businessCode ? lookupError(businessCode) : undefined;
-  if (businessCode && info) {
-    console.log(`  ${t("error.code", { code: businessCode })}`);
-    console.log(`  ${t("error.fix", { fix: info.fix })}`);
-  }
-  console.log(`Request ID: ${requestId ?? "-"}`);
+  for (const line of gatewayErrorLines(parsed, requestId)) console.log(line);
   return requestId;
 }
 

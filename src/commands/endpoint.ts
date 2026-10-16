@@ -12,7 +12,7 @@ import { Command } from "commander";
 
 import { buildClient, type Client } from "../core/client.js";
 import type { GlobalArgs } from "../core/credentials.js";
-import { printAligned, printTable, splitCsv, stopReasonAdvice, summaryLine } from "../core/format.js";
+import { parseFreeQuota, printAligned, printTable, splitCsv, stopReasonAdvice, summaryLine } from "../core/format.js";
 import { emitJson } from "../core/output.js";
 import { t } from "../core/i18n.js";
 import { confirm } from "../core/prompt.js";
@@ -30,18 +30,6 @@ interface Endpoint {
   PaymentEnabled?: boolean;
   StopReason?: string;
   ChargeDetail?: string;
-}
-
-/** 免费额度信息藏在 ChargeDetail 这个 JSON 字符串里 */
-function parseFreeQuota(chargeDetail: string | undefined): Record<string, unknown> | undefined {
-  if (!chargeDetail) return undefined;
-  try {
-    const parsed = JSON.parse(chargeDetail) as Record<string, unknown>;
-    return (parsed["FreeQuota"] as Record<string, unknown> | undefined) ?? undefined;
-  } catch {
-    // 后端返回的不是合法 JSON 时静默跳过，不影响主体信息展示
-    return undefined;
-  }
 }
 
 async function listCommand(opts: Record<string, string>, globals: GlobalArgs): Promise<void> {
