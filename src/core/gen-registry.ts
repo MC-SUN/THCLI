@@ -26,7 +26,7 @@ export type TaskState = "queued" | "running" | "succeeded" | "failed";
  *   raw      裸 Base64，不带 data: 前缀
  *   urlOnly  只收公网 URL，本地文件直接拦截
  */
-export type MediaEncoding = "dataUrl" | "raw" | "urlOnly";
+type MediaEncoding = "dataUrl" | "raw" | "urlOnly";
 
 /** 查询请求：GET 路径，或 POST 路径 + 体 */
 export interface QuerySpec {
@@ -49,7 +49,7 @@ export interface TaskResult {
 }
 
 /** 内联双语文案（帮助文本就近维护，随当前语言取值） */
-export type ParamText = { zh: string; en: string };
+type ParamText = { zh: string; en: string };
 
 /** 对象 / 数组参数里的一个子字段（help 属性树与校验） */
 export interface ParamField {
@@ -139,7 +139,7 @@ export interface FamilySpec {
 }
 
 /** 多接口族里的一个接口 */
-export interface ApiSpec {
+interface ApiSpec {
   /** 官方支持该接口的模型白名单（缺省 = 族内全部模型） */
   models?: string[];
   params: ParamSpec[];

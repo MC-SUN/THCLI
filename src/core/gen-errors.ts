@@ -33,7 +33,7 @@ export const VENDOR_NAMES: Record<VendorId, string> = {
 };
 
 /** 修复建议类别 */
-export type VendorErrorCategory =
+type VendorErrorCategory =
   | "param"
   | "media"
   | "moderation"
@@ -206,7 +206,7 @@ const MINIMAX_H3 = tableOf([
   ["rate_limit_error", "rateLimit", "请求频率超限（平台侧，HTTP 429）", "Rate limit exceeded (platform side, HTTP 429)"],
   ["insufficient_balance_error", "balance", "余额不足（HTTP 402）", "Insufficient balance (HTTP 402)"],
   ["authentication_error", "auth", "鉴权失败（HTTP 401 / 403）", "Authentication failed (HTTP 401 / 403)"],
-  ["internal_error", "busy", "内部错误（厂商未返回具体错误码时也用这个值兜底）", "Internal error (also the fallback when the vendor returns no code)"],
+  ["internal_error", "busy", "内部错误", "Internal error"],
 ]);
 
 const TABLES: Record<VendorId, Record<string, VendorCode>> = {
@@ -231,8 +231,8 @@ export interface VendorErrorInfo {
 export function lookupVendorError(vendor: VendorId, code: string): VendorErrorInfo | undefined {
   const table = TABLES[vendor];
   const key = table[code] ? code : Object.keys(table).find((k) => k.toLowerCase() === code.toLowerCase());
-  const entry = key ? table[key] : undefined;
-  if (!entry || !key) return undefined;
+  if (!key) return undefined;
+  const entry = table[key]!;
   return {
     vendor,
     code: key,
@@ -253,7 +253,7 @@ export function vendorCodes(vendor: VendorId): string[] {
 }
 
 /** 从响应里取到的厂商错误 */
-export interface VendorErrorHit {
+interface VendorErrorHit {
   vendor: VendorId;
   /** 厂商错误码；生成期失败而厂商没给码时为空 */
   code?: string;
@@ -305,7 +305,7 @@ export function extractVendorError(vendor: VendorId, body: unknown): VendorError
     case "minimax-h3": {
       // 平台侧：顶层 error 只有 type / message（带 code 的是网关自己的错误，不在这里认）
       const top = objOf(resp["error"]);
-      if (top && top["code"] === undefined && strOf(top["type"])) return { vendor, code: strOf(top["type"]), message: strOf(top["message"]) };
+      if (top && top["code"] == null && strOf(top["type"])) return { vendor, code: strOf(top["type"]), message: strOf(top["message"]) };
       const taskError = objOf(objOf(resp["task"])?.["error"]);
       if (taskError) return { vendor, code: codeOf(taskError["code"]), message: strOf(taskError["message"]) };
       return undefined;
@@ -346,7 +346,10 @@ export function vendorErrorLines(hit: VendorErrorHit, requestId: string | undefi
   const detail = hit.message ?? info?.reason;
   if (detail) lines.push(t("chat.errorDetail", { detail }));
   if (hit.code) {
-    lines.push(`  ${info ? t("vendor.code", { vendor: name, code: hit.code, reason: info.reason }) : t("vendor.codeUnknown", { vendor: name, code: hit.code })}`);
+    const line = info
+      ? t("vendor.code", { vendor: name, code: hit.code, reason: info.reason })
+      : t("vendor.codeUnknown", { vendor: name, code: hit.code });
+    lines.push(`  ${line}`);
   }
   lines.push(`  ${t("error.fix", { fix: messageFixOf(hit.vendor, hit.message) ?? info?.fix ?? t("vendor.fix.unknown") })}`);
   if (diagnose && info && DIAGNOSABLE_CATEGORIES.has(info.category)) lines.push(`  ${t("error.diagnose", { cmd: diagnose })}`);
@@ -358,7 +361,7 @@ export function vendorErrorLines(hit: VendorErrorHit, requestId: string | undefi
 // ── 平台网关错误在 +gen 场景下的补充 ──
 
 /** +gen 的调用场景：在平台场景（diagnose）之外，补上模型、厂商与响应头信息 */
-export interface GenErrorScene extends GatewayErrorScene {
+interface GenErrorScene extends GatewayErrorScene {
   /** +gen 调用的模型（401007/401008 直接给 models activate <模型>，用户手上没有 ep ID） */
   genModel?: string;
   /** 模型厂商：平台没给业务码时按厂商格式解析（PixVerse ErrCode / Kling code / MiniMax base_resp 等） */

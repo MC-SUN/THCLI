@@ -19,7 +19,7 @@ import { CONFIG_DIR } from "./paths.js";
 import type { MediaKind, TaskState } from "./gen-registry.js";
 
 /** 记录文件路径 */
-export const GEN_TASKS_PATH = path.join(CONFIG_DIR, "gen-tasks.jsonl");
+const GEN_TASKS_PATH = path.join(CONFIG_DIR, "gen-tasks.jsonl");
 
 /** 提示词只留开头：列表里够认出是哪个任务即可 */
 const PROMPT_PREVIEW_CHARS = 60;
@@ -67,7 +67,8 @@ export function recordSubmitted(
 ): void {
   appendLine(file, {
     ...task,
-    prompt: task.prompt.slice(0, PROMPT_PREVIEW_CHARS),
+    // 按 code point 截断（slice 会把 emoji 等代理对截成半个字符）
+    prompt: Array.from(task.prompt).slice(0, PROMPT_PREVIEW_CHARS).join(""),
     state: "queued",
     updatedAt: task.createdAt,
   });
@@ -88,8 +89,8 @@ export function recordState(
 ): void {
   const known = findTask(taskId, file);
   if (!known) return;
-  const savedChanged = Boolean(saved?.length) && JSON.stringify(saved) !== JSON.stringify(known?.saved);
-  if (known?.state === state && !savedChanged) return;
+  const savedChanged = Boolean(saved?.length) && JSON.stringify(saved) !== JSON.stringify(known.saved);
+  if (known.state === state && !savedChanged) return;
   appendLine(file, { taskId, state, updatedAt: now.toISOString(), ...(saved?.length ? { saved } : {}) });
 }
 

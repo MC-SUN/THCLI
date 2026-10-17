@@ -18,7 +18,7 @@ const SERVING_ENDPOINT_STATUS = new Set(["ACTIVE", "RUNNING", "MODEL_PRE_OFFLINE
  * 服务侧结论：ok 可调 / notFound 该地域查不到模型 / offline 模型已下线 / noEndpoint 没有接入点 /
  * notReady 接入点未运行（VIRTUAL 未开通、INACTIVE 已停止、CREATING 创建中等）/ noBilling 无剩余免费额度且未开后付费
  */
-export type ServiceState = "ok" | "notFound" | "offline" | "noEndpoint" | "notReady" | "noBilling";
+type ServiceState = "ok" | "notFound" | "offline" | "noEndpoint" | "notReady" | "noBilling";
 
 export interface ServiceCheck {
   State: ServiceState;
@@ -40,7 +40,8 @@ export function remainingFreeQuota(endpoint: Row, now = Date.now()): ServiceChec
   const total = Number(quota["TotalQuota"] ?? 0);
   const used = Number(quota["UsedQuota"] ?? 0);
   const expire = typeof quota["ExpireTime"] === "string" ? quota["ExpireTime"] : undefined;
-  if (total <= used || (expire && Date.parse(expire) <= now)) return undefined;
+  // 非数字（NaN）一律视为无额度：NaN <= NaN 为 false，不拦会把 NaN 当"仍有额度"返回
+  if (!Number.isFinite(total) || !Number.isFinite(used) || total <= used || (expire && Date.parse(expire) <= now)) return undefined;
   return { Used: used, Total: total, ...(expire ? { ExpireTime: expire } : {}) };
 }
 
