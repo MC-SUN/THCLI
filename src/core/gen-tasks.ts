@@ -5,7 +5,8 @@
  * 用了 --no-wait、等待超时、或者终端关了，ID 就找不回来——钱花了却取不到结果。
  *
  * 追加写（JSONL）：提交时写一行，状态变化时再写一行，读取时按任务 ID 合并、后写的覆盖先写的。
- * 不做"读-改-写整个文件"：多个终端同时生成时不会互相覆盖。
+ * 除压缩外不做"读-改-写整个文件"：多个终端同时生成时不会互相覆盖；
+ * 压缩是唯一例外，rename 前重读补回窗口内的新行（见 compactIfLarge），残余窗口为微秒级。
  *
  * 不记 API Key，也不记结果 URL（临时签名地址，约 12 小时失效，记了也没用；要结果就再查一次）。
  * 提示词可能涉及隐私，文件权限 0600。写失败不影响生成本身。
@@ -151,14 +152,26 @@ export async function forEachLimit<T>(items: T[], limit: number, fn: (item: T) =
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
-/** 文件过大时重写成"每任务一行"，只留最近的若干个 */
+/**
+ * 文件过大时重写成"每任务一行"，只留最近的若干个。
+ * 压缩是本模块唯一一次"读-改-写整个文件"，与追加写的并发承诺冲突——
+ * rename 前重读原文件、把压缩窗口内其他终端追加的行按内容比对补回（合并语义下后写的自然覆盖），
+ * 丢行窗口从整个压缩耗时（秒级）缩到重读与 rename 之间的微秒级。
+ */
 function compactIfLarge(file: string): void {
   try {
-    const lines = fs.readFileSync(file, "utf8").split("\n").length;
-    if (lines <= COMPACT_AT_LINES) return;
+    const text = fs.readFileSync(file, "utf8");
+    if (text.split("\n").length <= COMPACT_AT_LINES) return;
     const kept = loadTasks(file).slice(0, KEEP_TASKS).reverse();
-    const tmp = `${file}.tmp`;
-    fs.writeFileSync(tmp, kept.map((x) => JSON.stringify(x)).join("\n") + "\n", { mode: 0o600 });
+    // 快照读完后别的进程可能又追加过行（新任务提交 / 老任务状态更新）：补回，别让压缩吃掉它们
+    const seen = new Set(text.split("\n"));
+    const fresh = fs
+      .readFileSync(file, "utf8")
+      .split("\n")
+      .filter((line) => line.trim() && !seen.has(line));
+    // tmp 带进程号与时间戳：两个终端同时压缩时不互踩对方的临时文件
+    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+    fs.writeFileSync(tmp, [...kept.map((x) => JSON.stringify(x)), ...fresh].join("\n") + "\n", { mode: 0o600 });
     fs.renameSync(tmp, file);
   } catch {
     // 压缩失败只是文件大一点，下次再试
