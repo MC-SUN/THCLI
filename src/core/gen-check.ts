@@ -92,7 +92,7 @@ export function keyCoversModel(key: Row, model: string, endpointIds: string[]): 
 /** 额度是否已用完 / 已停用（DescribeApiKey 详情里的 QuotaSet / QuotaStatus） */
 export function quotaExhausted(detail: Row): boolean {
   if (String(detail["QuotaStatus"] ?? "") === "inactive") return true;
-  const quotas = (detail["QuotaSet"] as Row[] | undefined) ?? [];
+  const quotas = Array.isArray(detail["QuotaSet"]) ? (detail["QuotaSet"] as Row[]) : [];
   return quotas.some((q) => {
     const total = Number(q["CycleCredits"] ?? 0);
     return total > 0 && Number(q["CycleUsed"] ?? 0) >= total;

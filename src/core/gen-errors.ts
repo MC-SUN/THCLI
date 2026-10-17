@@ -390,7 +390,12 @@ export function genFixOf(code: string, model: string): string | undefined {
 export function genErrorLines(body: Record<string, unknown> | string, requestId: string | undefined, scene: GenErrorScene = {}): string[] {
   if (!extractBusinessCode(body) && scene.vendor && typeof body !== "string") {
     const hit = extractVendorError(scene.vendor, body);
-    if (hit) return vendorErrorLines(hit, requestId, scene.diagnose);
+    if (hit) {
+      const lines = vendorErrorLines(hit, requestId, scene.diagnose);
+      // 厂商路径同样保留限流提示（与下方网关路径的 retryAfter 一致）
+      if (scene.retryAfter) lines.push(`  ${t("gen.retryAfter", { seconds: scene.retryAfter })}`);
+      return lines;
+    }
   }
   const messageFix = scene.vendor ? messageFixOf(scene.vendor, extractErrorDetail(body)) : undefined;
   return gatewayErrorLines(body, requestId, scene, {

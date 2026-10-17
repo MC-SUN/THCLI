@@ -184,10 +184,15 @@ function isRequestTimeout(err: unknown): boolean {
   return err instanceof Error && (err as { requestTimeout?: boolean }).requestTimeout === true;
 }
 
+/** 参数含空白 / 引号时按 POSIX 单引号转义，保证提示里的命令复制后可原样执行 */
+function shellQuote(arg: string): string {
+  return /[\s'"]/.test(arg) ? `'${arg.replace(/'/g, `'\\''`)}'` : arg;
+}
+
 /** 用户敲的原始命令（超时指引里给可复制的重试命令）：bin 名取 argv[1]（npm link 后即 thcli/th），直跑产物回退 thcli */
 function retryCommand(): string {
   const bin = path.basename(process.argv[1] ?? "thcli");
-  return `${bin === "main.cjs" ? "thcli" : bin} ${process.argv.slice(2).join(" ")}`;
+  return `${bin === "main.cjs" ? "thcli" : bin} ${process.argv.slice(2).map(shellQuote).join(" ")}`;
 }
 
 /** 查询请求超时 → 补「任务已提交 + 重查命令」；其他错误原样抛出（调用方直接 throw 本函数结果） */
