@@ -406,15 +406,15 @@ async function selectTools(names: string[], opts: InstallOptions, env: AgentEnv)
   if (opts.yes || !process.stdin.isTTY) {
     return detected;
   }
-  // 列出全部支持的 Agent，检测到的排前面；每项标明选了以后会发生什么（回车 = 接入检测到的这些）
+  // 列出全部支持的 Agent，检测到的排前面；每项标明选了以后会发生什么（回车 = 接入全部）
   const detectedSet = new Set(detected.map((x) => x.key));
   const ordered = [...detected, ...TOOLS.filter((x) => !detectedSet.has(x.key))];
   console.log(t("agent.select.header"));
   ordered.forEach((tool, i) => {
     console.log(`  ${i + 1}. ${tool.name} (${tool.key}) — ${selectMark(tool, detectedSet.has(tool.key))}`);
   });
-  const answer = (await ask(t("agent.select.prompt", { detected: detected.length })))?.trim().toLowerCase() ?? "";
-  if (!answer || answer === "all" || answer === "a") return detected;
+  const answer = (await ask(t("agent.select.prompt")))?.trim().toLowerCase() ?? "";
+  if (!answer || answer === "all" || answer === "a") return ordered;
   const picked = splitCsv(answer)
     .map((x) => ordered[Number(x) - 1] ?? toolOf(x))
     .filter((x): x is ToolSpec => Boolean(x));

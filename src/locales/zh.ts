@@ -1303,7 +1303,7 @@ export const ZH: Messages = {
   "agent.key.hint.tp": "在控制台生成个人版共享 Key（tokenhub/tokenplan/common/api-key）后重跑，或用 --api-key 传入",
   "agent.key.hint.tp-ep": "用 --api-key 传入，或在该套餐下新建专属 Key 后重跑",
   "agent.select.header": "可接入的 Agent：",
-  "agent.select.prompt": "选择要接入的序号或 key（逗号分隔，回车 = 已安装的 {detected} 个）：",
+  "agent.select.prompt": "选择要接入的序号（逗号分隔，回车 = 全部安装）：",
   "agent.select.detected": "已安装",
   "agent.select.npmInstall": "未安装，选中后可自动安装",
   "agent.select.manualInstall": "未安装，需先从官网下载安装",

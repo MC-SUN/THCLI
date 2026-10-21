@@ -1305,7 +1305,7 @@ Options:
   "agent.key.hint.tp": "Create the personal-plan shared key in the console (tokenhub/tokenplan/common/api-key) and rerun, or pass --api-key",
   "agent.key.hint.tp-ep": "Pass --api-key, or create a dedicated key under this plan and rerun",
   "agent.select.header": "Agents you can connect:",
-  "agent.select.prompt": "Pick numbers or keys, comma-separated (Enter = the {detected} detected): ",
+  "agent.select.prompt": "Pick numbers, comma-separated (Enter = install all): ",
   "agent.select.detected": "installed",
   "agent.select.npmInstall": "not installed, can be installed automatically",
   "agent.select.manualInstall": "not installed, download it from the official site first",
