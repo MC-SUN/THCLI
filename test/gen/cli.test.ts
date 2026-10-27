@@ -113,6 +113,35 @@ describe("+gen 接口字段 flag（--dry-run）", () => {
       /only accepts a public URL/,
     );
   });
+
+  it("本地校验：混元生图 --size 格式/宽高/面积（v3 与 v3.5 约束不同；--param 旁路也拦）", () => {
+    const e = (args: string[]) => run(args).out;
+    const v3 = ["wand/hunyuan-image/v3-generation", "--model", "hy-image-v3", "--prompt", "cat"];
+    // 缺陷复现值：2048x2048 面积 4M > 1024x1024
+    assert.match(e([...v3, "--size", "2048x2048"]), /area exceeds the 1024x1024 limit/);
+    // 宽高低于下限 [512,2048]
+    assert.match(e([...v3, "--size", "1024x300"]), /sides must be within \[512,2048\]/);
+    // 格式错
+    assert.match(e([...v3, "--size", "big"]), /must be WxH/);
+    // 合法值放行；--param 覆盖旁路同样拦截
+    assert.equal(body([...v3, "--size", "1024x1024"])["size"], "1024x1024");
+    assert.match(e([...v3, "--param", "size=2048x2048"]), /area exceeds the 1024x1024 limit/);
+    // v3.5：边界 4096x4096 = 16777216 恰好放行，4097x4096 超面积
+    const v35 = ["wand/hunyuan-image/v35-generation", "--model", "hy-image-v3.5-preview", "--messages", '[{"role":"user","content":[{"type":"text","text":"cat"}]}]'];
+    assert.equal(body([...v35, "--size", "4096x4096"])["size"], "4096x4096");
+    assert.match(e([...v35, "--size", "4097x4096"]), /area exceeds the 16777216 limit/);
+    // v3.5：只超宽高上限、面积未超（8193x2047=16775171）→ 报宽高而非面积
+    assert.match(e([...v35, "--size", "8193x2047"]), /sides must be within \[256,8192\]/);
+    // v3：宽高与面积全部顶格（2048x512=1048576）→ 放行
+    assert.equal(body([...v3, "--size", "2048x512"])["size"], "2048x512");
+    // 大写 X 分隔不是合法格式（与服务端 WxH 小写一致）
+    assert.match(e([...v3, "--size", "1024X1024"]), /must be WxH/);
+    // --body 最高优先级旁路同样拦截
+    assert.match(
+      e([...v3, "--body", '{"model":"hy-image-v3","prompt":"cat","size":"2048x2048"}']),
+      /area exceeds the 1024x1024 limit/,
+    );
+  });
 });
 
 const N = (...args: string[]): string[] => normalizeHelpArg(["node", "thcli", ...args]).slice(2);

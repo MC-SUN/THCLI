@@ -344,8 +344,26 @@ const HY_IMAGE_V3: FamilySpec = {
     B("revise", T("是否改写提示词", "Rewrite the prompt")),
   ],
   doc: "https://cloud.tencent.com/document/product/1823/135745",
+  validateBody: hyImageSizeCheck(512, 2048, 1_048_576, "1024x1024"),
   parse: (resp) => syncResult(urlsOf(resp["data"]), resp),
 };
+
+/** 混元生图 size 校验：WxH 格式 + 宽高范围 + 面积上限（v3 与 v3.5 约束不同，参数化；在 --param/--body 合并后执行，旁路也拦） */
+function hyImageSizeCheck(minSide: number, maxSide: number, maxArea: number, areaLabel: string): (body: Obj) => string | undefined {
+  return (body) => {
+    const v = str(body["size"]);
+    if (!v) return undefined;
+    const m = /^(\d+)x(\d+)$/.exec(v);
+    if (!m) return t("gen.check.sizeFormat", { value: v });
+    const w = Number(m[1]);
+    const h = Number(m[2]);
+    if (w < minSide || w > maxSide || h < minSide || h > maxSide) {
+      return t("gen.check.sizeSide", { value: v, min: minSide, max: maxSide });
+    }
+    if (w * h > maxArea) return t("gen.check.sizeArea", { value: v, max: areaLabel });
+    return undefined;
+  };
+}
 
 const HY_IMAGE_V35: FamilySpec = {
   id: "hy-image-v3.5",
@@ -387,6 +405,7 @@ const HY_IMAGE_V35: FamilySpec = {
     O("use_search_tool", T("外部搜索增强（默认关闭）", "External search enhancement (off by default)"), [F("value", "boolean", T("开关", "On/off"))]),
   ],
   doc: "https://cloud.tencent.com/document/product/1823/135745",
+  validateBody: hyImageSizeCheck(256, 8192, 16_777_216, "16777216"),
   requestNote: T(
     'Chat/Messages 协议，messages 为多轮会话（最后一条 role=user 是本轮指令）。示例：\n--messages \'[{"role":"user","content":[{"type":"text","text":"一只猫"},{"type":"image_url","image_url":{"url":"./ref.png"}}]}]\'\n多轮编辑：把上轮响应的 assembled_history 原样写进 --messages 再追加本轮 user 消息',
     'Chat/Messages protocol; messages is a multi-turn session (the last role=user is this turn). Example:\n--messages \'[{"role":"user","content":[{"type":"text","text":"a cat"},{"type":"image_url","image_url":{"url":"./ref.png"}}]}]\'\nMulti-turn edit: put the previous assembled_history into --messages and append this turn\'s user message',
