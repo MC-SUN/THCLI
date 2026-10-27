@@ -1,6 +1,6 @@
 # +gen 测试
 
-覆盖 `thcli +gen <接口ID>`、`+gen models`、`+gen status`、`+gen tasks` 全部命令。参数按官方调用指南（`tools/文档参数表.xlsx`、`tools/actions/`）逐字段整理：
+覆盖 `thcli +gen <接口ID>`、`+gen apis`、`+gen status`、`+gen tasks` 全部命令。参数按官方调用指南（`tools/文档参数表.xlsx`、`tools/actions/`）逐字段整理：
 每个接口的参数 = 请求体顶层字段，flag 名即字段名（下划线换连字符），如 `--sequential-image-generation`。
 
 ## 文件
@@ -14,8 +14,8 @@
 | `errors.test.ts` | 厂商错误码定位 / 码表 / 展示、按报错原文的修复建议、网关错误在 `+gen` 场景的建议与 doctor 诊断命令 | `npm test` |
 | `doctor.test.ts` | `doctor model` 诊断：服务侧可用性（模型 / 接入点 / 计费）、按量 Key 云端状态 | `npm test` |
 | `run.sh` | 端到端用例（本地校验 → 请求体断言 → 真实提交 → 等结果），规则见下文 | `bash test/gen/run.sh` |
-| `catalog.md` | 用例目录：35 个接口逐字段的用例清单与覆盖矩阵（**生成，勿手改**） | — |
-| `generate.ts` | 由注册表生成 `catalog.md`，以及 `skills/*/SKILL.md` 的「接口参数」章节 | `npx tsc -p tsconfig.test.json && node dist-test/test/gen/generate.js` |
+| `catalog.md` | 用例目录：33 个接口逐字段的用例清单与覆盖矩阵（**生成，勿手改**） | — |
+| `generate.ts` | 由注册表生成 `catalog.md`，以及 `skills/*/SKILL.md` 的「接口参数」章节（skill 仓库已独立时用 `SKILLS_DIR=<路径>` 指定） | `npx tsc -p tsconfig.test.json && node dist-test/test/gen/generate.js` |
 
 改了接口注册表（`src/core/gen-registry.ts`）后重跑 `generate.ts`，`catalog.md` 与 skill 参数表一起更新。
 
@@ -75,6 +75,8 @@
 - **素材统一取自 `test/assets/`**：图片 `images/`、音频 `audio/`、视频 `videos/`。不再使用 `https://x/...`、`example.com` 等占位地址，也不依赖他人桶里的外部素材。
 - **可收本地文件的字段**直接传 `../assets/...` 本地路径，CLI 自动编码为 Base64 / data URL。
 - **只收 URL 的字段**（kling motion-control / omni 的视频、vidu `--videos`、wand 生视频的 content、world2 的图片、hy-3d `--multi-view-images`、异步 ASR 等）用**同一份素材**在 COS 上的副本：`$ASSET_URL/<相对 test/assets 的路径>`，默认 `https://mps-ollie-test-1308104797.cos.ap-guangzhou.myqcloud.com/thcli-assets`。素材有增改时先 `bash run.sh --sync-assets`（coscli 上传到 `$ASSET_COS`）；server / all 层开跑前会逐个检查这些 URL 可访问。
-- **real 层**覆盖每类代表接口（图像 3、视频 12、3D 3、语音 5），产物落到 `$R_OUT`（默认 `/tmp/thcli-real-out`）。异步任务加 `--verify` 会逐个等到出结果，统计真实成败。
-- 需已 `thcli auth login` 配好数据面 Key（见 skill「前置」）。
-- 用到按量付费模型时需先开通：`thcli models activate <模型ID> --yes`。
+- **real 层**覆盖每类代表接口（图像 3、视频 11、3D 3、语音 5），**产物落 `$R_OUT/<用例ID>/`**（目录名=用例 ID，一眼对上「哪个用例生成了什么」；同步接口提交即落盘，异步接口由 `--verify` 的 `status --wait --output` 落盘），末尾打印产物映射表。
+- **res 段**（`--all` 时顺序执行，扣费）：用 real 段同步产物作输入创建 Kling 主体/音色（`element create` / `voice create`），再把 `element_id` / `voice_id` 用于生成（`--element-list` / `--contents type=element` / TTS `--voice-setting`），最后 `delete` 真实删除收尾——体现「生成的资源用于生成其他内容」的完整链路。
+- **doctor 段**：平台码 / 厂商冲突码（1002 双厂商并列）/ vendor 全表 / 未收录码 / 非法厂商，加 `doctor model` 真实体检。
+- **act 段**（`--all` 时）：`models activate --yes` 遍历全部 +gen 模型（已开模型幂等重跑，未开模型真实开启）。
+- 需已 `thcli auth login` 配好数据面 Key（见 skill「前置」）；`act` 段已含模型开通，无需手动 `models activate`。

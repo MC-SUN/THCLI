@@ -439,7 +439,7 @@
 | aud-asrproxy-synctranscribe-03 | --data | `thcli +gen wand/asrproxy/sync_transcribe --model hy-asr-3.0-preview --data ../assets/audio/speech-zh-10s.wav` | data | 请求体含 data |
 | aud-asrproxy-synctranscribe-04 | --source | `thcli +gen wand/asrproxy/sync_transcribe --model hy-asr-3.0-preview --input-url https://mps-ollie-test-1308104797.cos.ap-guangzhou.myqcloud.com/thcli-assets/audio/speech-zh-10s.wav --source zh` | source | 请求体含 source |
 | aud-asrproxy-synctranscribe-05 | --voice-encode-format | `thcli +gen wand/asrproxy/sync_transcribe --model hy-asr-3.0-preview --input-url https://mps-ollie-test-1308104797.cos.ap-guangzhou.myqcloud.com/thcli-assets/audio/speech-zh-10s.wav --voice-encode-format x` | voice_encode_format | 请求体含 voice_encode_format |
-| aud-asrproxy-synctranscribe-06 | --input-url 本地文件 | `thcli +gen wand/asrproxy/sync_transcribe --model hy-asr-3.0-preview --input-url ../assets/videos/dub-video.mp4` | 只收 URL | 本地报「只收公网 URL」 |
+| aud-asrproxy-synctranscribe-06 | --input-url 本地文件 | `thcli +gen wand/asrproxy/sync_transcribe --model hy-asr-3.0-preview --input-url ../assets/images/cat-window.jpg` | 只收 URL | 本地报「只收公网 URL」 |
 
 ### wand/asrproxy/async_create
 
@@ -449,7 +449,7 @@
 | aud-asrproxy-asynccreate-02 | --source | `thcli +gen wand/asrproxy/async_create --model hy-asr-3.0-preview --input-url https://mps-ollie-test-1308104797.cos.ap-guangzhou.myqcloud.com/thcli-assets/videos/dub-video.mp4 --source zh` | source | 请求体含 source |
 | aud-asrproxy-asynccreate-03 | --subtitle-format | `thcli +gen wand/asrproxy/async_create --model hy-asr-3.0-preview --input-url https://mps-ollie-test-1308104797.cos.ap-guangzhou.myqcloud.com/thcli-assets/videos/dub-video.mp4 --subtitle-format srt` | subtitle_format | 请求体含 subtitle_format |
 | aud-asrproxy-asynccreate-04 | 缺 --input-url | `thcli +gen wand/asrproxy/async_create --model hy-asr-3.0-preview` | 必填校验 | 本地报「--input-url 必填」 |
-| aud-asrproxy-asynccreate-05 | --input-url 本地文件 | `thcli +gen wand/asrproxy/async_create --model hy-asr-3.0-preview --input-url ../assets/videos/dub-video.mp4` | 只收 URL | 本地报「只收公网 URL」 |
+| aud-asrproxy-asynccreate-05 | --input-url 本地文件 | `thcli +gen wand/asrproxy/async_create --model hy-asr-3.0-preview --input-url ../assets/images/cat-window.jpg` | 只收 URL | 本地报「只收公网 URL」 |
 
 ### wand/minimax-tts/sync_tts
 
@@ -481,7 +481,7 @@
 | aud-minimax-tts-syncclone-07 | --text-validation | `thcli +gen wand/minimax-tts/sync_clone --audio-url https://mps-ollie-test-1308104797.cos.ap-guangzhou.myqcloud.com/thcli-assets/audio/ref6s.mp3 --text-validation x` | text_validation | 请求体含 text_validation |
 | aud-minimax-tts-syncclone-08 | --accuracy | `thcli +gen wand/minimax-tts/sync_clone --audio-url https://mps-ollie-test-1308104797.cos.ap-guangzhou.myqcloud.com/thcli-assets/audio/ref6s.mp3 --accuracy 0.8` | accuracy | 请求体含 accuracy |
 | aud-minimax-tts-syncclone-09 | --output-format | `thcli +gen wand/minimax-tts/sync_clone --audio-url https://mps-ollie-test-1308104797.cos.ap-guangzhou.myqcloud.com/thcli-assets/audio/ref6s.mp3 --output-format hex` | output_format | 请求体含 output_format |
-| aud-minimax-tts-syncclone-10 | --audio-url 本地文件 | `thcli +gen wand/minimax-tts/sync_clone --audio-url ../assets/audio/speech-zh-10s.wav` | 只收 URL | 本地报「只收公网 URL」 |
+| aud-minimax-tts-syncclone-10 | --audio-url 本地文件 | `thcli +gen wand/minimax-tts/sync_clone --audio-url ../assets/images/cat-window.jpg` | 只收 URL | 本地报「只收公网 URL」 |
 
 ### wand/minimax-tts/sync_design
 

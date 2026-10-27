@@ -41,7 +41,7 @@ MODE=local
 DRY_RUN=0
 VERIFY=0
 SYNC_ASSETS=0
-ONLY=""
+ONLY=${ONLY:-}
 while [ $# -gt 0 ]; do
   case "$1" in
     --server) MODE=server ;;
@@ -270,8 +270,8 @@ run_case vid-kling-10 local "fail:未知字段「aspect_ratio」" "kling 图生 
   "$THCLI" +gen wand/kling/image-to-video --model kling-video-v3 --contents "[{\"type\":\"first_frame\",\"url\":\"$CAT\"}]" --settings '{"aspect_ratio":"16:9"}'
 run_case vid-omni-02  local "fail:aspect_ratio"             "omni 无首帧无 aspect_ratio" \
   "$THCLI" +gen wand/kling/omni-video --model kling-video-v3-omni --contents '[{"type":"prompt","text":"猫"}]'
-run_case vid-omni-03  server "field:base_video"             "omni base_video 编辑" \
-  "$THCLI" +gen wand/kling/omni-video --model kling-video-v3-omni --contents "[{\"type\":\"prompt\",\"text\":\"把背景换成夜景\"},{\"type\":\"base_video\",\"url\":\"$DANCE_URL\"}]" --settings '{"aspect_ratio":"16:9"}' --no-wait --verbose
+run_case vid-omni-03  server "field:base_video"             "omni base_video 编辑（audio=native 保音轨）" \
+  "$THCLI" +gen wand/kling/omni-video --model kling-video-v3-omni --contents "[{\"type\":\"prompt\",\"text\":\"把背景换成夜景\"},{\"type\":\"base_video\",\"url\":\"$DANCE_URL\"}]" --settings '{"aspect_ratio":"16:9","audio":"native"}' --no-wait --verbose
 run_case vid-omni-04  local "fail:5 或 10 秒"               "o1 duration 非法" \
   "$THCLI" +gen wand/kling/omni-video --model kling-video-o1 --contents '[{"type":"prompt","text":"猫"}]' --settings '{"aspect_ratio":"16:9","duration":8}'
 run_case vid-motion-02 local "fail:type=\"image\""          "motion-control 缺形象图" \
@@ -422,8 +422,8 @@ run_case aud-mureka-07 local "fail:--lyrics 必填"           "mureka 缺歌词"
 
 # ================= 通用命令 =================
 echo "-- 通用 --"
-run_case gen-01 local ok              "列全部接口"          "$THCLI" +gen models
-run_case gen-04 local "field:wand/vidu/reference-to-video" "看 vidu 接口详情" "$THCLI" +gen models wand/vidu/reference-to-video
+run_case gen-01 local ok              "列全部接口"          "$THCLI" +gen apis
+run_case gen-04 local "field:wand/vidu/reference-to-video" "看 vidu 接口详情" "$THCLI" +gen apis wand/vidu/reference-to-video
 run_case gen-07 local "fail:unknown option" "已删除的公共参数 --ratio" \
   "$THCLI" +gen wand/si-image/generation --model seedream-image-v5.0-pro --prompt x --ratio 16:9
 
@@ -474,9 +474,9 @@ echo "-- real（真实素材端到端生成，扣费）--"
 R_OUT=${R_OUT:-/tmp/thcli-real-out}; mkdir -p "$R_OUT"
 # 图像
 run_case real-img-01  real ok "hy-image-v3 文生图" \
-  "$THCLI" +gen wand/hunyuan-image/v3-generation --model hy-image-v3 --prompt 一只柴犬在草地上 --output "$R_OUT"
+  "$THCLI" +gen wand/hunyuan-image/v3-generation --model hy-image-v3 --prompt 一只柴犬在草地上 --output "$R_OUT/real-img-01"
 run_case real-img-02  real ok "seedream 本地参考图编辑" \
-  "$THCLI" +gen wand/si-image/generation --model seedream-image-v5.0-pro --prompt 把这只猫改成水彩画风格 --images "$CAT" --output "$R_OUT"
+  "$THCLI" +gen wand/si-image/generation --model seedream-image-v5.0-pro --prompt 把这只猫改成水彩画风格 --images "$CAT" --output "$R_OUT/real-img-02"
 run_case real-img-03  real ok "kling-image-o1 多图融合" \
   "$THCLI" +gen wand/kling-image/generation --model kling-image-o1 --prompt 让柯基坐在这间房间里 --image-list "[\"$CORGI\",\"$ROOM\"]" --no-wait
 # 视频
@@ -506,27 +506,154 @@ run_case real-vid-11  real ok "wand-video 首帧 URL" \
 run_case real-3d-01   real ok "hy-3d 本地商品图生 3D" \
   "$THCLI" +gen api/3d/submit --model hy-3d-3.1 --image-base64 "$SNEAKER" --no-wait
 run_case real-pano-01 real ok "world2 全景（房间图）" \
-  "$THCLI" +gen wand/hunyuan-image/world2-panorama --model hy-world2-panorama --prompt 温馨的客厅 --images "$ROOM_URL" --output "$R_OUT"
+  "$THCLI" +gen wand/hunyuan-image/world2-panorama --model hy-world2-panorama --prompt 温馨的客厅 --images "$ROOM_URL" --output "$R_OUT/real-pano-01"
 run_case real-scene-01 real ok "world2 3D 场景（庭院图）" \
   "$THCLI" +gen wand/hunyuan-video/world2-scene --model hy-world2-scene --image-url "$COURT_URL" --no-wait
 # 语音
 run_case real-asr-01  real ok "ASR 同步（本地中文 10s）" \
-  "$THCLI" +gen wand/asrproxy/sync_transcribe --model hy-asr-3.0-preview --data "$WAV" --output "$R_OUT"
+  "$THCLI" +gen wand/asrproxy/sync_transcribe --model hy-asr-3.0-preview --data "$WAV" --output "$R_OUT/real-asr-01"
 run_case real-asr-02  real ok "ASR 异步字幕（中文 30s URL）" \
   "$THCLI" +gen wand/asrproxy/async_create --model hy-asr-3.0-preview --input-url "$WAV30_URL" --subtitle-format srt --no-wait
 run_case real-tts-01  real ok "TTS 合成" \
-  "$THCLI" +gen wand/minimax-tts/sync_tts --model minimax-speech-2.8-hd --text 你好世界 --voice-setting '{"voice_id":"male-qn-qingse"}' --output "$R_OUT"
+  "$THCLI" +gen wand/minimax-tts/sync_tts --model minimax-speech-2.8-hd --text 你好世界 --voice-setting '{"voice_id":"male-qn-qingse"}' --output "$R_OUT/real-tts-01"
 run_case real-clone-01 real ok "声音复刻（本地 6s 参考音）" \
-  "$THCLI" +gen wand/minimax-tts/sync_clone --model minimax-voice-clone --audio-data "$REF" --voice-id "thcli_test_$(date +%m%d%H%M%S)" --output "$R_OUT"
+  "$THCLI" +gen wand/minimax-tts/sync_clone --model minimax-voice-clone --audio-data "$REF" --voice-id "thcli_test_$(date +%m%d%H%M%S)" --output "$R_OUT/real-clone-01"
 run_case real-dub-01  real ok "AI 配音（中文视频 → 英文）" \
   "$THCLI" +gen wand/dubbing/async_generation --model wand-dubbing-clone-v1 --input-url "$DUB_URL" --dst-language en --no-wait
 
+# ================= res（资源链路：生成产物 → 创建资源 → 再用于生成，顺序执行，扣费） =================
+# 依赖：real-img-01/02 的产物图（创建主体）与 6s 参考音素材（创建音色，Kling 要求参考音频 ≥5s）；体现「生成的资源用于生成其他内容」
+if [ "$MODE" = all ] && [ "$DRY_RUN" != 1 ]; then
+  echo "-- res（资源链路，顺序执行，扣费）--"
+  IMG1=$(ls "$R_OUT/real-img-01" 2>/dev/null | head -1); IMG1="$R_OUT/real-img-01/$IMG1"
+  IMG2=$(ls "$R_OUT/real-img-02" 2>/dev/null | head -1); IMG2="$R_OUT/real-img-02/$IMG2"
+  MP3=$(ls "$R_OUT/real-tts-01" 2>/dev/null | head -1);  MP3="$R_OUT/real-tts-01/$MP3"
+  RES_ELEM=""; RES_VOICE=""
+  if [ -n "$IMG1" ] && [ -n "$IMG2" ]; then
+    ro=$("$THCLI" +gen resource kling-element create --images "$IMG1" --images "$IMG2" --element-name "thcli_e2e_$(date +%m%d)" --element-description "run.sh res 链路：real-img-01/02 的产物图创建的主体" 2>&1); rc=$?
+    RES_ELEM=$(printf '%s' "$ro" | grep -oE '^element_id: [^[:space:]]+' | head -1 | awk '{print $2}')
+    if [ "$rc" -eq 0 ] && [ -n "$RES_ELEM" ]; then PASS=$((PASS+1)); TIER_PASS[real]=$(( ${TIER_PASS[real]:-0} + 1 )); printf '  PASS %-16s %s（element_id=%s）\n' real-res-01 "element create（用 real-img-01/02 产物图）" "$RES_ELEM"
+    else FAIL=$((FAIL+1)); FAILED+=(real-res-01); TIER_FAIL[real]=$(( ${TIER_FAIL[real]:-0} + 1 )); printf '  FAIL %-16s %s\n' real-res-01 "element create"; printf '       → %s\n' "$(reason_of "$ro")"; fi
+  else
+    SKIP=$((SKIP+1)); printf '  SKIP %-16s 前置产物缺失（real-img-01/02）\n' real-res-01
+  fi
+  if [ -n "$RES_ELEM" ]; then
+    run_case real-res-02 real ok "kling-image-o1 用主体生成（--element-list）" \
+      "$THCLI" +gen wand/kling-image/generation --model kling-image-o1 --prompt 这个人物在夕阳下的海边散步 --element-list "[{\"element_id\":\"$RES_ELEM\"}]" --no-wait
+    run_case real-res-03 real ok "kling 图生视频引用主体（--contents type=element）" \
+      "$THCLI" +gen wand/kling/image-to-video --model kling-video-v3 --contents "[{\"type\":\"prompt\",\"text\":\"这个人物微笑挥手\"},{\"type\":\"element\",\"element_id\":\"$RES_ELEM\"}]" --settings '{"duration":5}' --no-wait
+  else SKIP=$((SKIP+2)); printf '  SKIP %-16s 无 element_id（跳过 res-02/03）\n' real-res-02; fi
+  if [ -n "$MP3" ]; then
+    ro=$("$THCLI" +gen resource kling-voice create --input "$REF" --voice-name "thcli_e2e_voice_$(date +%m%d)" 2>&1); rc=$?
+    RES_VOICE=$(printf '%s' "$ro" | grep -oE '^voice_id: [^[:space:]]+' | head -1 | awk '{print $2}')
+    if [ "$rc" -eq 0 ] && [ -n "$RES_VOICE" ]; then PASS=$((PASS+1)); TIER_PASS[real]=$(( ${TIER_PASS[real]:-0} + 1 )); printf '  PASS %-16s %s（voice_id=%s）\n' real-res-04 "voice create（6s 参考音）" "$RES_VOICE"
+    else FAIL=$((FAIL+1)); FAILED+=(real-res-04); TIER_FAIL[real]=$(( ${TIER_FAIL[real]:-0} + 1 )); printf '  FAIL %-16s %s\n' real-res-04 "voice create"; printf '       → %s\n' "$(reason_of "$ro")"; fi
+  else SKIP=$((SKIP+1)); printf '  SKIP %-16s 前置产物缺失（real-tts-01）\n' real-res-04; fi
+  if [ -n "$RES_VOICE" ]; then
+    run_case real-res-05 real ok "kling 图生视频引用自定义音色（--contents type=voice）" \
+      "$THCLI" +gen wand/kling/image-to-video --model kling-video-v3 --contents "[{\"type\":\"prompt\",\"text\":\"用复刻的音色说：欢迎观看\"},{\"type\":\"first_frame\",\"url\":\"$CAT\"},{\"type\":\"voice\",\"voice_id\":\"$RES_VOICE\"}]" --settings '{"duration":5,"audio":"native"}' --no-wait
+  fi
+  # 收尾：真实删除刚创建的资源（云端写操作）
+  if [ -n "$RES_ELEM" ]; then
+    ro=$("$THCLI" +gen resource kling-element delete --element-id "$RES_ELEM" 2>&1); rc=$?
+    if [ "$rc" -eq 0 ]; then PASS=$((PASS+1)); TIER_PASS[real]=$(( ${TIER_PASS[real]:-0} + 1 )); printf '  PASS %-16s 真实删除收尾（element）\n' real-res-06
+    else FAIL=$((FAIL+1)); FAILED+=(real-res-06); TIER_FAIL[real]=$(( ${TIER_FAIL[real]:-0} + 1 )); printf '  FAIL %-16s resource delete（element）\n' real-res-06; printf '       → %s\n' "$(reason_of "$ro")"; fi
+  fi
+  if [ -n "$RES_VOICE" ]; then
+    ro=$("$THCLI" +gen resource kling-voice delete --voice-id "$RES_VOICE" 2>&1); rc=$?
+    if [ "$rc" -eq 0 ]; then PASS=$((PASS+1)); TIER_PASS[real]=$(( ${TIER_PASS[real]:-0} + 1 )); printf '  PASS %-16s 真实删除收尾（voice）\n' real-res-06
+    else FAIL=$((FAIL+1)); FAILED+=(real-res-06); TIER_FAIL[real]=$(( ${TIER_FAIL[real]:-0} + 1 )); printf '  FAIL %-16s resource delete（voice）\n' real-res-06; printf '       → %s\n' "$(reason_of "$ro")"; fi
+  fi
+fi
+
+# ================= resource 负边界（--dry-run 本地校验，零费） =================
+echo "-- resource 负边界（本地校验）--"
+run_case res-neg-01  body "fail:至少 2 张参考图" "element create 单图" \
+  "$THCLI" +gen resource kling-element create --images "$CAT" --element-name x --element-description x
+run_case res-neg-02  body "fail:最多 4 张" "element create 5 图" \
+  "$THCLI" +gen resource kling-element create --images "$CAT" --images "$LAND" --images "$SNEAKER" --images "$CORGI" --images "$FACE" --element-name x --element-description x
+run_case res-neg-03  body "fail:互斥" "element --images 与 --ref-video 同给" \
+  "$THCLI" +gen resource kling-element create --images "$CAT" --images "$LAND" --ref-video "$DANCE_URL" --element-name x --element-description x
+run_case res-neg-04  body "fail:需要 --input" "voice create 缺媒体" \
+  "$THCLI" +gen resource kling-voice create --voice-name x
+run_case res-neg-05  body "fail:缺少必填参数" "element create 缺 --element-name" \
+  "$THCLI" +gen resource kling-element create --images "$CAT" --images "$LAND" --element-description x
+run_case res-neg-06  body "fail:required option" "resource get 缺 --task-id" \
+  "$THCLI" +gen resource kling-element get
+run_case res-neg-07  body "fail:required option" "resource delete 缺 --element-id" \
+  "$THCLI" +gen resource kling-element delete
+
+# ================= doctor（错误码与模型体检，联网只读，零费） =================
+echo "-- doctor --"
+run_case doc-err-01    local ok "平台码 401002" \
+  "$THCLI" doctor error 401002
+run_case doc-err-02    local ok "401007（+gen 场景 fixGen）" \
+  "$THCLI" doctor error 401007
+run_case doc-err-03    local ok "冲突码 1002（Kling/MiniMax 并列）" \
+  "$THCLI" doctor error 1002
+run_case doc-err-04    local ok "vendor 全表（kling）" \
+  "$THCLI" doctor error --vendor kling
+run_case doc-err-05    local ok "vendor 单查（kling 1201）" \
+  "$THCLI" doctor error 1201 --vendor kling
+run_case doc-err-06    local ok "未收录码 999999" \
+  "$THCLI" doctor error 999999
+run_case doc-err-07    local "fail:未知厂商" "非法厂商" \
+  "$THCLI" doctor error x --vendor foo
+run_case doc-model-01  local ok "doctor model（hy-image-v3）" \
+  "$THCLI" doctor model --id hy-image-v3
+run_case doc-model-02  local ok "doctor model（kling-video-v3-turbo）" \
+  "$THCLI" doctor model --id kling-video-v3-turbo
+
+# ================= act（models activate 遍历全部 +gen 模型，真实写操作） =================
+if [ "$MODE" = all ] && [ "$DRY_RUN" != 1 ] && [ -z "$ONLY" ]; then
+  echo "-- act（models activate 遍历全部 +gen 模型，已开模型幂等重跑）--"
+  ACT_OK=0; ACT_FAIL=0; ACT_FAILED=()
+  mapfile -t ACT_MODELS < <("$THCLI" +gen apis --json 2>/dev/null | node -e '
+    let s=""; process.stdin.on("data", d => s+=d).on("end", () => {
+      const j = JSON.parse(s); const m = new Set();
+      for (const a of j) for (const x of a.Models ?? []) m.add(x);
+      console.log([...m].sort().join("\n"));
+    });')
+  for m in "${ACT_MODELS[@]}"; do
+    ao=$("$THCLI" models activate "$m" --yes 2>&1); ac=$?
+    if [ "$ac" -ne 0 ]; then
+      ACT_FAIL=$((ACT_FAIL+1)); ACT_FAILED+=("$m"); printf '  FAIL %-32s %s\n' "$m" "$(reason_of "$ao")"
+    elif printf '%s' "$ao" | grep -q "尚无推理服务"; then
+      ACT_FAIL=$((ACT_FAIL+1)); ACT_FAILED+=("$m(needEndpoint)"); printf '  FAIL %-32s 尚无推理服务，无法开启\n' "$m"
+    elif printf '%s' "$ao" | grep -qE "没有待开启|已全部开启"; then
+      ACT_OK=$((ACT_OK+1)); printf '  OK   %-32s（已开启，幂等）\n' "$m"
+    else
+      ACT_OK=$((ACT_OK+1)); printf '  OK   %-32s %s\n' "$m" "$(printf '%s' "$ao" | grep -m1 '已为' || true)"
+    fi
+  done
+  printf '  遍历 %s 个模型：开启成功(含幂等)=%s 失败=%s\n' "${#ACT_MODELS[@]}" "$ACT_OK" "$ACT_FAIL"
+fi
+
+# ================= 负边界（status/tasks 参数校验） =================
+echo "-- 负边界（status/tasks）--"
+run_case neg-status-01 local "fail:本机没有任务" "status 查不存在的任务" \
+  "$THCLI" +gen status wand/vidu/text-to-video e2e-not-exist-999
+run_case neg-tasks-01  local "fail:--limit 需要正整数" "tasks --limit abc" \
+  "$THCLI" +gen tasks --limit abc
+# activate 无参是友好提示（exit 0），run_case 的 fail 断言要求 exit≠0，改为 shell 级验证
+ao=$("$THCLI" models activate 2>&1)
+if printf '%s' "$ao" | grep -q "请指定模型 ID"; then
+  PASS=$((PASS+1)); TIER_PASS[local]=$(( ${TIER_PASS[local]:-0} + 1 )); printf '  PASS %-16s activate 无参提示\n' act-neg-01
+else
+  FAIL=$((FAIL+1)); FAILED+=(act-neg-01); TIER_FAIL[local]=$(( ${TIER_FAIL[local]:-0} + 1 )); printf '  FAIL %-16s activate 无参提示\n' act-neg-01; printf '       → %s\n' "$(reason_of "$ao")"
+fi
+run_case act-neg-02   local "fail:not found" "activate 不存在的模型" \
+  "$THCLI" models activate no-such-model-xyz --yes
+
 # ================= --verify：并发等待异步任务；厂商偶发错误自动重提 1 次 =================
 VERIFY_OK=0; VERIFY_FAIL=0; VERIFY_FAILED=(); VERIFY_RETRIED=0
-wait_one() {   # $1=用例ID $2=接口 $3=任务ID → 输出一行「状态|用例ID|说明」
-  local o c
-  o=$("$THCLI" +gen status "$2" "$3" --wait --timeout "$VERIFY_TIMEOUT" --interval 10 2>&1); c=$?
-  if [ "$c" -eq 0 ]; then echo "DONE|$1|$(printf '%s' "$o" | grep -m1 -oE 'https?://[^ ?]+' | cut -c1-110)"
+wait_one() {   # $1=用例ID $2=接口 $3=任务ID → 输出一行「状态|用例ID|说明」；产物落 $R_OUT/<用例ID>/（目录名=用例 ID，产物与用例关联）
+  local o c files
+  mkdir -p "$R_OUT/$1"
+  o=$("$THCLI" +gen status "$2" "$3" --wait --timeout "$VERIFY_TIMEOUT" --interval 10 --output "$R_OUT/$1" 2>&1); c=$?
+  if [ "$c" -eq 0 ]; then
+    files=$(cd "$R_OUT/$1" && ls -1 2>/dev/null | head -4 | paste -sd' ' -)
+    echo "DONE|$1|$(printf '%s' "$o" | grep -m1 -oE 'https?://[^ ?]+' | cut -c1-110)${files:+ | 产物: $files}"
   else echo "FAIL|$1|$(reason_of "$o")"; fi
 }
 if [ "$VERIFY" = 1 ] && [ "${#TASKS[@]}" -gt 0 ]; then
@@ -568,6 +695,16 @@ for t in local body server real; do
   [ -n "${TIER_PASS[$t]:-}${TIER_FAIL[$t]:-}" ] && printf '  %-7s PASS=%-4s FAIL=%s\n' "$t" "${TIER_PASS[$t]:-0}" "${TIER_FAIL[$t]:-0}"
 done
 [ "$VERIFY" = 1 ] && echo "VERIFY  完成=$VERIFY_OK  失败=$VERIFY_FAIL  重提=$VERIFY_RETRIED${VERIFY_FAILED[*]:+  (${VERIFY_FAILED[*]})}"
+[ -n "${ACT_OK:-}" ] && echo "ACT     开启(含幂等)=$ACT_OK 失败=$ACT_FAIL${ACT_FAILED[*]:+  (${ACT_FAILED[*]})}"
+if [ -d "$R_OUT" ] && ls "$R_OUT"/*/ >/dev/null 2>&1; then
+  echo ""
+  echo "== 产物映射（$R_OUT，目录名 = 用例 ID → 产物文件）=="
+  for d in "$R_OUT"/*/; do
+    [ -d "$d" ] || continue
+    id=$(basename "$d"); files=$(ls -1 "$d" 2>/dev/null | paste -sd' ' -)
+    printf '  %-16s %s\n' "$id" "${files:-(空)}"
+  done
+fi
 if [ "$FAIL" -gt 0 ] || [ "$VERIFY_FAIL" -gt 0 ]; then
   [ "$FAIL" -gt 0 ] && echo "失败用例: ${FAILED[*]}"
   exit 1

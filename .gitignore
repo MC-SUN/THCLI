@@ -6,6 +6,7 @@ dist/
 dist-test/
 dist-skills/
 *.tsbuildinfo
+output/
 
 # npm pack 的临时产物
 *.tgz
