@@ -270,8 +270,8 @@ run_case vid-kling-10 local "fail:未知字段「aspect_ratio」" "kling 图生 
   "$THCLI" +gen wand/kling/image-to-video --model kling-video-v3 --contents "[{\"type\":\"first_frame\",\"url\":\"$CAT\"}]" --settings '{"aspect_ratio":"16:9"}'
 run_case vid-omni-02  local "fail:aspect_ratio"             "omni 无首帧无 aspect_ratio" \
   "$THCLI" +gen wand/kling/omni-video --model kling-video-v3-omni --contents '[{"type":"prompt","text":"猫"}]'
-run_case vid-omni-03  server "field:base_video"             "omni base_video 编辑（audio=native 保音轨）" \
-  "$THCLI" +gen wand/kling/omni-video --model kling-video-v3-omni --contents "[{\"type\":\"prompt\",\"text\":\"把背景换成夜景\"},{\"type\":\"base_video\",\"url\":\"$DANCE_URL\"}]" --settings '{"aspect_ratio":"16:9","audio":"native"}' --no-wait --verbose
+run_case vid-omni-03  server "field:base_video"             "omni base_video 编辑（audio=native 不兼容 base_video，Kling 1201）" \
+  "$THCLI" +gen wand/kling/omni-video --model kling-video-v3-omni --contents "[{\"type\":\"prompt\",\"text\":\"把背景换成夜景\"},{\"type\":\"base_video\",\"url\":\"$DANCE_URL\"}]" --settings '{"aspect_ratio":"16:9"}' --no-wait --verbose
 run_case vid-omni-04  local "fail:5 或 10 秒"               "o1 duration 非法" \
   "$THCLI" +gen wand/kling/omni-video --model kling-video-o1 --contents '[{"type":"prompt","text":"猫"}]' --settings '{"aspect_ratio":"16:9","duration":8}'
 run_case vid-motion-02 local "fail:type=\"image\""          "motion-control 缺形象图" \
