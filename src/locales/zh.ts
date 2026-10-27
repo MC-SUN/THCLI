@@ -1145,6 +1145,7 @@ export const ZH: Messages = {
   "gen.rateLimitExhausted": "已重试 {n} 次仍被限流；稍后再试或降低并发（thcli monitor 的 rate-limited 指标可看限流情况）",
   "gen.pollRateLimited": "已连续 {n} 次查询失败（限流或网络中断），任务仍在云端，继续等待…",
   "gen.downloadNetworkFailed": "下载失败（网络中断，已重试 {n} 次）：{cause}；产物地址 12 小时内有效，重跑同一条 status 命令可重新下载",
+  "gen.savedRenamed": "{file} 已存在，改存 {next}（--output 不会覆盖已有文件）",
   "gen.noTaskId": "提交成功但响应里没有任务 ID，原始响应：{body}",
   "gen.submitted": "已提交，任务 ID：{id}",
   "gen.submittedWaiting": "已提交（{id}），等待生成完成…",

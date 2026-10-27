@@ -1149,6 +1149,7 @@ export const EN: Messages = {
   "gen.rateLimitExhausted": "Still rate limited after {n} retries; retry later or lower concurrency (see the rate-limited metric in thcli monitor)",
   "gen.pollRateLimited": "{n} consecutive query failures (rate limited or network interrupted); the task is still running, keep waiting...",
   "gen.downloadNetworkFailed": "Download failed (network error after {n} retries): {cause}; the result URL stays valid for about 12 hours - rerun the same status command to download again",
+  "gen.savedRenamed": "{file} already exists, saving as {next} (--output never overwrites existing files)",
   "gen.noTaskId": "Submitted but no task ID in the response: {body}",
   "gen.submitted": "Submitted, task ID: {id}",
   "gen.submittedWaiting": "Submitted ({id}), waiting for the result...",

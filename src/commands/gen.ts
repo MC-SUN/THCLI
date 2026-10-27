@@ -592,41 +592,66 @@ export async function fetchWithRetry(
   }
 }
 
+/**
+ * 目标文件已被占用（磁盘已存在或本批已保存）时加序号找空位：result-1.txt → result-1-2.txt。
+ * --output 的语义是「攒产物」：默认永不静默覆盖——批量循环与重跑同一任务都不丢数据。
+ * 注：existsSync 与写入间存在 TOCTOU 窗口，多进程并发写同一目录时可能退化为覆盖
+ * （不劣于旧行为），单进程场景无影响。
+ */
+export function dedupePath(file: string, taken: Set<string>): string {
+  if (!taken.has(file) && !fs.existsSync(file)) return file;
+  const ext = path.extname(file);
+  const stem = file.slice(0, file.length - ext.length);
+  for (let n = 2; ; n++) {
+    const next = `${stem}-${n}${ext}`;
+    if (!taken.has(next) && !fs.existsSync(next)) return next;
+  }
+}
+
+/** 落盘前统一防覆盖，改名时 stderr 提示一句（批量场景的可见性；--json 下静默） */
+function reserveFile(file: string, taken: Set<string>): string {
+  const target = dedupePath(file, taken);
+  if (target !== file && !isJson()) {
+    console.error(t("gen.savedRenamed", { file: path.basename(file), next: path.basename(target) }));
+  }
+  return target;
+}
+
 /** 下载结果到目录，文件名取 URL 路径的 basename（去掉签名参数，重名加序号）；data URL（hex 音频转来）直接解码 */
-async function download(urls: string[], dir: string): Promise<string[]> {
+export async function download(urls: string[], dir: string): Promise<string[]> {
   fs.mkdirSync(dir, { recursive: true });
   const saved: string[] = [];
+  const taken = new Set<string>();
   for (const [i, url] of urls.entries()) {
     if (url.startsWith("data:")) {
       const m = /^data:([^;,]+);base64,(.*)$/s.exec(url);
       const ext = m ? (DATA_URL_EXT[m[1]!] ?? ".bin") : ".bin";
-      const file = path.join(dir, `result-${i}${ext}`);
+      const file = reserveFile(path.join(dir, `result-${i}${ext}`), taken);
       fs.writeFileSync(file, Buffer.from(m ? m[2]! : "", "base64"));
       saved.push(file);
+      taken.add(file);
       continue;
     }
-    const resp = await fetch(url);
+    const resp = await fetchWithRetry(url);
     if (!resp.ok) {
       throw new Error(t("gen.downloadFailed", { status: resp.status, url }));
     }
     const base = path.basename(new URL(url).pathname) || `result-${i}`;
-    let file = path.join(dir, base);
-    if (saved.includes(file)) {
-      const ext = path.extname(base);
-      file = path.join(dir, `${base.slice(0, base.length - ext.length)}-${i}${ext}`);
-    }
+    const file = reserveFile(path.join(dir, base), taken);
     fs.writeFileSync(file, Buffer.from(await resp.arrayBuffer()));
     saved.push(file);
+    taken.add(file);
   }
   return saved;
 }
 
-/** 文本结果落盘（语音转写正文；下载与 URL 共用同一个 --output 目录） */
-function saveTexts(texts: string[] | undefined, dir: string, offset: number): string[] {
+/** 文本结果落盘（语音转写正文；下载与 URL 共用同一个 --output 目录，同样防覆盖） */
+export function saveTexts(texts: string[] | undefined, dir: string, offset: number, taken: Set<string> = new Set()): string[] {
   if (!texts?.length) return [];
   return texts.map((text, i) => {
-    const file = path.join(dir, `result-${offset + i}.txt`);
+    const file = reserveFile(path.join(dir, `result-${offset + i}.txt`), taken);
     fs.writeFileSync(file, text, "utf8");
+    taken.add(file);
     return file;
   });
 }
@@ -644,8 +669,10 @@ function vendorFailure(ctx: GenContext, title: string, raw: Obj): Error | undefi
 
 /** 终态输出：成功打印 URL / 文本 / 元数据（可选下载），失败抛错带原因（--json 时输出 JSON 并以非零码退出） */
 async function finish(ctx: GenContext, result: TaskResult, raw: Obj, opts: GenOptions, taskId?: string): Promise<void> {
-  const saved = result.state === "succeeded" && opts.output ? await download(result.urls, opts.output) : [];
-  const savedTexts = result.state === "succeeded" && opts.output ? saveTexts(result.texts, opts.output, saved.length) : [];
+  // --output 在此统一做 ~ 展开（与 shell 一致）：不展开会在当前目录静默建出名为 ~ 的目录
+  const outDir = opts.output ? expandHome(opts.output) : undefined;
+  const saved = result.state === "succeeded" && outDir ? await download(result.urls, outDir) : [];
+  const savedTexts = result.state === "succeeded" && outDir ? saveTexts(result.texts, outDir, saved.length, new Set(saved)) : [];
   const allSaved = [...saved, ...savedTexts];
   if (taskId) recordState(taskId, result.state, new Date(), allSaved);
   if (

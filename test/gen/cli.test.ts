@@ -13,7 +13,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import { normalizeHelpArg } from "../../src/util/help-alias.js";
-import { backoffMs, fetchWithRetry, withRateLimitRetry } from "../../src/commands/gen.js";
+import { backoffMs, dedupePath, download, fetchWithRetry, saveTexts, withRateLimitRetry } from "../../src/commands/gen.js";
 import { initLang } from "../../src/core/i18n.js";
 import { expandHome } from "../../src/util/expand-home.js";
 
@@ -354,5 +354,47 @@ describe("~ 展开", () => {
     assert.equal(expandHome("/abs/out"), "/abs/out");
     // ~user 形式不静默展开（曾会把 ./~user 建进当前目录或错拼到主目录下）
     assert.throws(() => expandHome("~root/out"), /cross-platform|absolute path/);
+  });
+});
+
+describe("--output 防覆盖", () => {
+  it("dedupePath：不撞名原样；本批/磁盘撞名依次加 -2、-3；保留原下标", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "thcli-dedupe-"));
+    const free = path.join(dir, "a.txt");
+    assert.equal(dedupePath(free, new Set()), free);
+    // 本批（内存 Set）撞名
+    assert.equal(dedupePath(free, new Set([free])), path.join(dir, "a-2.txt"));
+    // 磁盘撞名：result-1.txt 已存在 → result-1-2.txt；-2 也占 → -3
+    fs.writeFileSync(path.join(dir, "result-1.txt"), "old");
+    assert.equal(dedupePath(path.join(dir, "result-1.txt"), new Set()), path.join(dir, "result-1-2.txt"));
+    fs.writeFileSync(path.join(dir, "result-1-2.txt"), "old2");
+    assert.equal(dedupePath(path.join(dir, "result-1.txt"), new Set()), path.join(dir, "result-1-3.txt"));
+    // 无扩展名文件
+    fs.writeFileSync(path.join(dir, "LICENSE"), "x");
+    assert.equal(dedupePath(path.join(dir, "LICENSE"), new Set()), path.join(dir, "LICENSE-2"));
+  });
+
+  it("saveTexts：同目录二次写入不覆盖（缺陷场景），内容互不干扰", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "thcli-texts-"));
+    const first = saveTexts(["hello"], dir, 0);
+    assert.equal(path.basename(first[0]!), "result-0.txt");
+    // 批量循环：第二个任务写同一目录，不再静默覆盖
+    const second = saveTexts(["world"], dir, 0);
+    assert.equal(path.basename(second[0]!), "result-0-2.txt");
+    assert.equal(fs.readFileSync(first[0]!, "utf8"), "hello");
+    assert.equal(fs.readFileSync(second[0]!, "utf8"), "world");
+  });
+
+  it("download：data URL 同目录二次写入防覆盖（重跑同一任务不丢旧产物）", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "thcli-dl-"));
+    const wav = "data:audio/wav;base64,UklGRg==";
+    const a = await download([wav], dir);
+    const b = await download([wav], dir);
+    assert.equal(path.basename(a[0]!), "result-0.wav");
+    assert.equal(path.basename(b[0]!), "result-0-2.wav");
+    // 第三个任务多产物：撞名下标继续找空位，未撞名下标正常落位
+    const c = await download([wav, wav], dir);
+    assert.equal(path.basename(c[0]!), "result-0-3.wav");
+    assert.equal(path.basename(c[1]!), "result-1.wav");
   });
 });
