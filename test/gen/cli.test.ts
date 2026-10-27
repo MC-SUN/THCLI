@@ -13,6 +13,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import { normalizeHelpArg } from "../../src/util/help-alias.js";
+import { expandHome } from "../../src/util/expand-home.js";
 
 const CLI = path.join(process.cwd(), "dist", "main.cjs");
 
@@ -118,5 +119,17 @@ describe("normalizeHelpArg", () => {
 
   it("+gen 接口调用里的 help 值不改（如 --prompt help）", () => {
     assert.deepEqual(N("+gen", "wand/si-image/generation", "--prompt", "help"), ["+gen", "wand/si-image/generation", "--prompt", "help"]);
+  });
+});
+
+describe("~ 展开", () => {
+  it("~/ 与裸 ~ 展开到主目录；~其它用户名明确报错；普通路径原样", () => {
+    const home = os.homedir();
+    assert.equal(expandHome("~/thcli-out"), path.join(home, "thcli-out"));
+    assert.equal(expandHome("~"), home);
+    assert.equal(expandHome("./out"), "./out");
+    assert.equal(expandHome("/abs/out"), "/abs/out");
+    // ~user 形式不静默展开（曾会把 ./~user 建进当前目录或错拼到主目录下）
+    assert.throws(() => expandHome("~root/out"), /cross-platform|absolute path/);
   });
 });

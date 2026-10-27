@@ -9,7 +9,6 @@
  * 结果 URL 是临时签名地址（约 12 小时），所以 --output 时直接下载到本地。
  */
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { Command } from "commander";
 
@@ -51,6 +50,7 @@ import { emitJson, isJson, redactLong, traceRequest, traceResponse } from "../co
 import { diagnoseCommandOf, extractRequestId, parseGatewayBody } from "../core/errors.js";
 import { extractVendorError, genErrorLines, type VendorId, vendorErrorLines } from "../core/gen-errors.js";
 import { logDataPlaneCall } from "../core/telemetry.js";
+import { expandHome } from "../util/expand-home.js";
 
 type Obj = Record<string, unknown>;
 
@@ -307,7 +307,7 @@ const DATA_URL_EXT: Record<string, string> = {
 function localPathOf(value: string): string | undefined {
   if (/^(https?:|data:)/i.test(value)) return undefined;
   if (value.startsWith("@")) return resolveInputPath(value);
-  const candidate = value.startsWith("~") ? path.join(os.homedir(), value.slice(1)) : value;
+  const candidate = expandHome(value);
   try {
     return candidate.length < 4096 && fs.existsSync(candidate) && fs.statSync(candidate).isFile() ? candidate : undefined;
   } catch {

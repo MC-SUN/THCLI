@@ -1133,6 +1133,7 @@ export const EN: Messages = {
   "gen.mediaBadFormat": "Local file {name} for {flag} has an unsupported format; accepted: {formats}",
   "gen.mediaTooLarge": "Local file {name} ({size}) for {flag} exceeds the {limit} limit; local files are inlined into the request body - use a smaller file or a public URL",
   "gen.fieldUrlOnly": "{flag} only accepts public URLs, not local files ({name})",
+  "util.tildeUser": "Paths like {value} (~anotheruser) have no cross-platform expansion; use an absolute path, or ~/ for the current user's home directory",
   "gen.badBody": "--body needs a JSON object or @file",
   "gen.bodyFileMissing": "Cannot read the --body file: {file}",
   "gen.bodyBadJson": "--body is not valid JSON: {reason}",

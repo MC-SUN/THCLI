@@ -17,10 +17,10 @@
  * 纯函数（只读文件不发请求），便于单测；告警通过返回值交给命令层打印。
  */
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { t } from "./i18n.js";
+import { expandHome } from "../util/expand-home.js";
 
 /** body 结构的三种形状 */
 export type PayloadShape = "chat" | "responses" | "anthropic";
@@ -108,7 +108,7 @@ function isUrl(raw: string): boolean {
 /** 把 --input 的值解析成绝对路径（支持 @path 与 ~） */
 export function resolveInputPath(rawPath: string): string {
   const cleaned = rawPath.startsWith("@") ? rawPath.slice(1) : rawPath;
-  const resolved = cleaned.startsWith("~") ? path.join(os.homedir(), cleaned.slice(1)) : cleaned;
+  const resolved = expandHome(cleaned);
   if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
     throw new Error(t("chat.inputMissing", { path: resolved }));
   }
