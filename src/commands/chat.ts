@@ -26,6 +26,7 @@ import {
   DEFAULT_ALIAS,
   KEY_TYPES,
   listRegionKeyAliases,
+  listSiteKeyScopes,
   loadDataConfig,
   resolveRegionKey,
   saveDataConfig,
@@ -141,17 +142,21 @@ export function resolveRequest(opts: ChatOptions, globals: GlobalArgs): Resolved
         ? "chat_options"
         : "none";
 
+  const keyConfig = loadDataConfig(profile);
   const apiKey =
     opts.apiKey ??
-    resolveRegionKey(loadDataConfig(profile), site, region, keyType, opts.alias);
+    resolveRegionKey(keyConfig, site, region, keyType, opts.alias);
   if (!apiKey) {
+    // 与 +gen 同款：默认地域查不到 Key 时列出该站点已配置的地域，避免误以为 Key 没配/配错
+    const scopes = listSiteKeyScopes(keyConfig, site, keyType);
+    const areaHint = scopes.length ? `\n${t("chat.noKeyAreaHint", { scopes: scopes.join("、") })}` : "";
     throw new Error(
       `${t("chat.noKey", {
         site,
         area: region,
         type: keyType,
         alias: opts.alias ?? DEFAULT_ALIAS,
-      })}\n${t("chat.noKeyFix", { type: keyType, area: region })}`,
+      })}\n${t("chat.noKeyFix", { type: keyType, area: region })}${areaHint}`,
     );
   }
 

@@ -21,7 +21,7 @@ import { type GlobalArgs, resolveEnv, resolveProfile, resolveSite } from "../cor
 import { collect, printTable, printWrappedTable, type WrapColumn } from "../core/format.js";
 import { findTask, forEachLimit, type GenTask, loadTasks, needsRefresh, recordState, recordSubmitted, scopeOf } from "../core/gen-tasks.js";
 import { t } from "../core/i18n.js";
-import { DEFAULT_ALIAS, loadDataConfig, resolveRegionKey } from "../core/keystore.js";
+import { DEFAULT_ALIAS, listSiteKeyScopes, loadDataConfig, resolveRegionKey } from "../core/keystore.js";
 import {
   checkBody,
   APIS,
@@ -114,13 +114,18 @@ function contextOf(opts: GenOptions, globals: GlobalArgs, model?: string, vendor
   if (!allowedRegions(site).includes(region)) {
     throw new Error(t("chat.badArea", { site, area: region, options: allowedRegions(site).join(", ") }));
   }
-  const apiKey = opts.apiKey ?? resolveRegionKey(loadDataConfig(profile), site, region, "th", opts.alias);
+  const keyConfig = loadDataConfig(profile);
+  const apiKey = opts.apiKey ?? resolveRegionKey(keyConfig, site, region, "th", opts.alias);
   if (!apiKey) {
+    // 默认地域查不到 Key 时列出该站点已配置的地域（国际站 Key 常在 sg，
+    // 缺省 gz 查不到会让用户误以为 Key 没配/配错）
+    const scopes = listSiteKeyScopes(keyConfig, site, "th");
+    const areaHint = scopes.length ? `\n${t("chat.noKeyAreaHint", { scopes: scopes.join("、") })}` : "";
     throw new Error(
       `${t("chat.noKey", { site, area: region, type: "th", alias: opts.alias ?? DEFAULT_ALIAS })}\n${t(
         "chat.noKeyFix",
         { type: "th", area: region },
-      )}`,
+      )}${areaHint}`,
     );
   }
   return {
@@ -264,7 +269,13 @@ async function request(ctx: GenContext, method: "GET" | "POST", urlPath: string,
       retryAfter: resp.headers.get("retry-after") ?? undefined,
       status: resp.status,
     });
-    throw new Error([t("gen.httpFailed", { status: resp.status, url: urlPath }), ...lines].join("\n"));
+    const err = new Error([t("gen.httpFailed", { status: resp.status, url: urlPath }), ...lines].join("\n"));
+    // 401：除 Key 本身错误外，地域不匹配也会 401（默认 gz，国际站 Key 常在 sg）——
+    // 本地存储的 Key 提示换地域，--api-key 临时指定的不涉及本地存储
+    if (resp.status === 401 && !ctx.adHocKey) {
+      err.message += `\n${t("gen.authAreaHint", { area: ctx.area, cmd: "thcli key list" })}`;
+    }
+    throw err;
   }
   return parsed;
 }

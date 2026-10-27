@@ -82,6 +82,21 @@ export function resolveRegionKey(
   return normalizeSlot(slot)[alias || DEFAULT_ALIAS];
 }
 
+/**
+ * 列出某 site/type 下所有有 Key 的 area/alias（形如 "sg/default"）。
+ * 用途：默认地域（gz）查不到 Key 时，提示用户该站点其它地域已配置——
+ * 国际站 Key 常在 sg，不带 --area 的 401/无 Key 报错容易误导用户怀疑 Key 本身。
+ */
+export function listSiteKeyScopes(cfg: DataConfig, site: string, type: string): string[] {
+  const out: string[] = [];
+  for (const [area, byType] of Object.entries(cfg.sites?.[site] ?? {})) {
+    for (const alias of Object.keys(normalizeSlot(byType[type]))) {
+      out.push(`${area}/${alias}`);
+    }
+  }
+  return out;
+}
+
 /** 写入 key，就地修改并返回 cfg */
 export function setRegionKey(
   cfg: DataConfig,
