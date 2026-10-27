@@ -1129,6 +1129,7 @@ export const ZH: Messages = {
   "gen.mediaBadFormat": "{flag} 的本地文件 {name} 格式不支持，只收 {formats}",
   "gen.mediaTooLarge": "{flag} 的本地文件 {name}（{size}）超过 {limit} 上限；本地文件会内联进请求体，请换更小的文件或改传公网 URL",
   "gen.fieldUrlOnly": "{flag} 只收公网 URL，不支持本地文件（{name}）",
+  "gen.fieldNotUrl": "{flag} 只收公网 URL（以 http:// 或 https:// 开头），当前值不像 URL：{value}",
   "util.tildeUser": "不支持 {value} 形式的路径（~其它用户名 跨平台无统一展开方式）；请使用绝对路径，或用 ~/ 指当前用户主目录",
   "gen.badBody": "--body 需要 JSON 对象，或 @文件路径",
   "gen.bodyFileMissing": "--body 指定的文件读取失败：{file}",

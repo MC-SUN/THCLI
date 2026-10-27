@@ -317,12 +317,19 @@ function localPathOf(value: string): string | undefined {
 
 /**
  * 单个字段值的本地文件编码：URL / Base64 原样；本地文件按字段的 media 规则编码。
- * 只收 URL 的字段遇到本地文件直接拦截——发出去也只会收到一个看不出原因的 400。
+ * 只收 URL 的字段遇到本地文件直接拦截——发出去也只会收到一个看不出原因的 400；
+ * 非 URL 形态的值（如写错的不存在路径）同样拦截——否则会被当 URL 字符串发到
+ * 服务端，用户等到 url 校验 400 才知道路径写错，且已消耗一次提交。
  * 图片的字节上限与格式白名单只对本地文件生效（URL 留给服务端校验）。
  */
 function encodeMediaValue(family: FamilySpec, p: ParamSpec, media: MediaSpec, value: string): string {
   const file = localPathOf(value);
-  if (!file) return value;
+  if (!file) {
+    if (media.encoding === "urlOnly" && !/^(https?:|data:)/i.test(value)) {
+      throw new Error(t("gen.fieldNotUrl", { flag: `--${p.flag}`, value }));
+    }
+    return value;
+  }
   if (media.encoding === "urlOnly") {
     throw new Error(t("gen.fieldUrlOnly", { flag: `--${p.flag}`, name: path.basename(file) }));
   }

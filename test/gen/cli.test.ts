@@ -99,6 +99,20 @@ describe("+gen 接口字段 flag（--dry-run）", () => {
     assert.match(run(["wand/si-image/generation", "--model", "seedream-image-v5.0-pro", "--prompt", "x", "--tools", '{"type":"web_search"}']).out, /only supported by seedream-image-v5.0-lite/);
     assert.match(run(["wand/minimax-tts/sync_tts", "--model", "minimax-speech-2.8-hd", "--text", "hi"]).out, /--voice-setting is required/);
   });
+
+  it("本地校验：只收 URL 的字段传不存在的本地路径也拦截（不当 URL 发到服务端）", () => {
+    // 缺陷回归：相对路径在 cwd 下不存在时曾被当普通 URL 字符串放行，
+    // 直到服务端 url 校验 400002 才暴露，且已消耗一次提交
+    assert.match(
+      run(["wand/asrproxy/async_create", "--model", "hy-asr-3.0-preview", "--input-url", "assets/audio/speech-zh-10s.wav"]).out,
+      /only accepts a public URL/,
+    );
+    // 不存在的绝对路径同样拦截
+    assert.match(
+      run(["wand/hunyuan-video/world2-scene", "--prompt", "x", "--image-url", "/nonexistent/a.png"]).out,
+      /only accepts a public URL/,
+    );
+  });
 });
 
 const N = (...args: string[]): string[] => normalizeHelpArg(["node", "thcli", ...args]).slice(2);
