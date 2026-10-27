@@ -21,6 +21,7 @@ import {
   FAMILIES,
   familyOf,
   mapMedia,
+  type MediaSpec,
   paramHelpText,
   paramUsage,
   parseParams,
@@ -34,6 +35,11 @@ initLang("en");
 const ep = (id: string) => apiOf(id)!;
 const fields = (id: string) => ep(id).params.map((p) => p.path);
 const param = (id: string, field: string) => ep(id).params.find((p) => p.path === field)!;
+/** 单数 media 收窄（media 可为数组：不同子路径不同规则；数组取第一条） */
+const single = (id: string, field: string): MediaSpec => {
+  const media = param(id, field).media;
+  return (Array.isArray(media) ? media[0] : media)!;
+};
 
 describe("注册表完整性", () => {
   it("模型 ID 全局唯一，异步族都有 taskIdOf 与 query", () => {
@@ -222,9 +228,9 @@ describe("请求体校验（适用模型 / 必填 / 互斥）", () => {
   });
 
   it("音视频本地文件限制：音色复刻 mp3/m4a/wav ≤20MB；配音 mp4/mov/m4v ≤75MB", () => {
-    const clone = param("wand/minimax-tts/sync_clone", "audio_data").media!;
+    const clone = single("wand/minimax-tts/sync_clone", "audio_data");
     assert.deepEqual([clone.formats, clone.maxBytes], [["mp3", "m4a", "wav"], 20_000_000]);
-    const dub = param("wand/dubbing/async_generation", "input_url").media!;
+    const dub = single("wand/dubbing/async_generation", "input_url");
     assert.deepEqual([dub.formats, dub.maxBytes], [["mp4", "mov", "m4v"], 75_000_000]);
   });
 
@@ -352,14 +358,21 @@ describe("本地文件编码位置（mapMedia）", () => {
   });
 
   it("可收本地文件的字段都声明了编码规则；只收 URL 的字段标 urlOnly", () => {
-    assert.equal(param("wand/si-image/generation", "images").media?.encoding, "dataUrl");
-    assert.equal(param("wand/kling-image/generation", "image").media?.encoding, "raw");
-    assert.deepEqual(param("wand/kling/image-to-video", "contents").media?.keys, ["url"]);
-    assert.equal(param("wand/vega-videos/tasks", "content").media?.encoding, "urlOnly");
-    assert.equal(param("wand/asrproxy/async_create", "input_url").media?.encoding, "urlOnly");
-    assert.equal(param("wand/asrproxy/sync_transcribe", "data").media?.encoding, "raw");
-    assert.equal(param("wand/dubbing/async_generation", "input_url").media?.encoding, "dataUrl");
-    assert.equal(param("api/3d/submit", "image_base64").media?.encoding, "raw");
+    assert.equal(single("wand/si-image/generation", "images").encoding, "dataUrl");
+    assert.equal(single("wand/kling-image/generation", "image").encoding, "raw");
+    assert.deepEqual(single("wand/kling/image-to-video", "contents").keys, ["url"]);
+    assert.equal(single("wand/vega-videos/tasks", "content").encoding, "urlOnly");
+    assert.equal(single("wand/asrproxy/async_create", "input_url").encoding, "urlOnly");
+    assert.equal(single("wand/asrproxy/sync_transcribe", "data").encoding, "raw");
+    assert.equal(single("wand/dubbing/async_generation", "input_url").encoding, "dataUrl");
+    assert.equal(single("api/3d/submit", "image_base64").encoding, "raw");
+    // subjects 双规则：images 可本地（dataUrl），videos 仅公网 URL（urlOnly）
+    const subjects = param("wand/vidu/reference-to-video", "subjects").media as MediaSpec[];
+    assert.ok(Array.isArray(subjects), "subjects.media 应为数组（双规则）");
+    assert.deepEqual(
+      subjects.map((m) => [m.encoding, m.keys?.[0]]),
+      [["dataUrl", "images"], ["urlOnly", "videos"]],
+    );
   });
 });
 

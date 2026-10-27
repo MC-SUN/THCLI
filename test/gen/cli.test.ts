@@ -142,6 +142,24 @@ describe("+gen 接口字段 flag（--dry-run）", () => {
       /area exceeds the 1024x1024 limit/,
     );
   });
+
+  it("本地校验：嵌套 urlOnly 子路径（vidu subjects[].videos）拒本地文件与不存在路径", () => {
+    // 存在的本地文件 → urlOnly 拦截（subjects[].videos 仅公网 URL）
+    assert.match(
+      run(["wand/vidu/reference-to-video", "--model", "vidu-video-q2-pro", "--prompt", "@a dancing", "--subjects", `[{"name":"a","videos":["${png}"]}]`]).out,
+      /only accepts public URLs, not local files/,
+    );
+    // 不存在的路径 → 非 URL 形态拦截
+    assert.match(
+      run(["wand/vidu/reference-to-video", "--model", "vidu-video-q2-pro", "--prompt", "@a dancing", "--subjects", '[{"name":"a","videos":["assets/videos/nope.mp4"]}]']).out,
+      /only accepts a public URL/,
+    );
+    // subjects[].images 仍可传本地文件（dataUrl 编码），且 videos 传 URL 正常放行
+    const b = body(["wand/vidu/reference-to-video", "--model", "vidu-video-q2-pro", "--prompt", "@a dancing", "--subjects", `[{"name":"a","images":["${png}"],"videos":["https://x/dance.mp4"]}]`]);
+    const s = (b["subjects"] as Array<{ images: string[]; videos: string[] }>)[0]!;
+    assert.match(s.images[0]!, /^data:image\/png;base64,/);
+    assert.equal(s.videos[0], "https://x/dance.mp4");
+  });
 });
 
 const N = (...args: string[]): string[] => normalizeHelpArg(["node", "thcli", ...args]).slice(2);

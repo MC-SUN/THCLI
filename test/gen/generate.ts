@@ -15,6 +15,7 @@ import {
   type ApiRef,
   isRequired,
   type MediaKind,
+  type MediaSpec,
   type ParamField,
   type ParamSpec,
   paramUsage,
@@ -32,9 +33,14 @@ const FACE = "images/portrait.jpg";
 const WAV = "audio/speech-zh-10s.wav";
 const VID = "videos/dance-8s.mp4";
 
+/** media 归一化成数组（ParamSpec.media 可为数组：不同子路径不同规则） */
+function mediaSpecs(p: ParamSpec): MediaSpec[] {
+  return p.media ? (Array.isArray(p.media) ? p.media : [p.media]) : [];
+}
+
 /** 本地文件样例：图片字段用 cat-window.jpg；音视频字段按接口给中文语音 / 配音视频 */
 function localSample(p: ParamSpec): string {
-  if (p.media?.type !== "media") return L(IMG);
+  if (mediaSpecs(p).find((m) => m.encoding !== "urlOnly")?.type !== "media") return L(IMG);
   return p.path === "input_url" ? L("videos/dub-video.mp4") : L(WAV);
 }
 
@@ -49,7 +55,17 @@ function sampleOf(p: ParamSpec): string {
   if (p.choices) return String(p.choices[0]);
   if (p.valueType === "boolean") return "true";
   if (p.valueType === "number") return "1";
-  if (p.media) return p.media.encoding === "urlOnly" ? (p.media.type === "image" ? U(IMG) : p.path === "input_url" ? U("videos/dub-video.mp4") : U(WAV)) : localSample(p);
+  {
+    const specs = mediaSpecs(p);
+    if (specs.length) {
+      const local = specs.find((m) => m.encoding !== "urlOnly");
+      if (!local) {
+        const first = specs[0]!;
+        return first.type === "image" ? U(IMG) : p.path === "input_url" ? U("videos/dub-video.mp4") : U(WAV);
+      }
+      return localSample(p);
+    }
+  }
   return p.path === "prompt" || p.path === "text" ? "猫" : "x";
 }
 
@@ -150,7 +166,8 @@ function rowsOf(e: ApiRef, prefix: string): string[] {
     }
   }
   for (const p of e.params) {
-    if (p.media?.encoding === "urlOnly") {
+    const specs = mediaSpecs(p);
+    if (specs.length && specs.every((m) => m.encoding === "urlOnly")) {
       const call = withFlag(e, model, p.flag, p.kind === "value" ? localSample(p) : "<含本地路径的 JSON>");
       rows.push(`| ${id()} | --${p.flag} 本地文件 | \`${call}\` | 只收 URL | 本地报「只收公网 URL」 |`);
       break;
@@ -220,8 +237,8 @@ fs.writeFileSync(OUT, `${out.join("\n").trimEnd()}\n`);
 console.log(`catalog.md: ${APIS.length} apis, ${byKind.reduce((n, k) => n + total(k), 0)} cases`);
 
 // ── 2. skill 文档的「接口参数」章节
-const SKILLS = path.join(process.cwd(), "skills");
-const SKILL_DIR: Record<MediaKind, string> = { image: "thcli-image", video: "thcli-video", "3d": "thcli-world", audio: "thcli-audio" };
+const SKILLS = process.env.SKILLS_DIR ?? path.join(process.cwd(), "skills");
+const SKILL_DIR: Record<MediaKind, string> = { image: "thcli-image", video: "thcli-video", "3d": "thcli-3d", audio: "thcli-audio" };
 const BEGIN = "<!-- apis:begin -->";
 const END = "<!-- apis:end -->";
 const esc = (s: string) => s.replace(/\|/g, "\\|");
@@ -231,7 +248,10 @@ function noteOf(p: ParamSpec): string {
   if (p.required === true) notes.push("**必填**");
   else if (Array.isArray(p.required)) notes.push(`**${p.required.join(" / ")} 必填**`);
   if (p.models) notes.push(`仅 ${p.models.join(" / ")}`);
-  if (p.media) notes.push(p.media.encoding === "urlOnly" ? "仅公网 URL" : "可传本地文件");
+  {
+    const specs = mediaSpecs(p);
+    if (specs.length) notes.push(specs.some((m) => m.encoding !== "urlOnly") ? "可传本地文件" : "仅公网 URL");
+  }
   return notes.join("；");
 }
 
@@ -245,7 +265,7 @@ function skillSection(e: ApiRef): string[] {
 }
 
 if (!fs.existsSync(SKILLS)) {
-  console.log("skills/ 不存在，跳过 SKILL.md 接口参数章节");
+  console.log(`skills/ 不存在（${SKILLS}），跳过 SKILL.md 接口参数章节；skills 已迁移为独立仓库时用 SKILLS_DIR=<路径> 指定`);
 } else {
   for (const { kind, eps } of byKind) {
     const file = path.join(SKILLS, SKILL_DIR[kind], "SKILL.md");

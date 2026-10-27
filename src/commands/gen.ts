@@ -370,8 +370,8 @@ function apiFlagValues(api: ApiRef, opts: Obj): Obj {
     const raw = opts[kebabToCamel(p.flag)];
     if (raw === undefined) continue;
     let value = parseParamValue(p, String(raw));
-    const media = p.media;
-    if (media) value = mapMedia(value, media.keys, (s) => encodeMediaValue(api.family, p, media, s));
+    const specs = p.media ? (Array.isArray(p.media) ? p.media : [p.media]) : undefined;
+    if (specs) for (const m of specs) value = mapMedia(value, m.keys, (s) => encodeMediaValue(api.family, p, m, s));
     values[p.path] = value;
   }
   return values;

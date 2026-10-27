@@ -98,8 +98,8 @@ export interface ParamSpec {
   required?: boolean | string[];
   /** 适用模型（缺省 = 接口全部模型）；其它模型传了在本地报错 */
   models?: string[];
-  /** 字段值可以是本地文件时的编码规则 */
-  media?: MediaSpec;
+  /** 字段值可以是本地文件时的编码规则；数组 = 不同子路径不同规则（如 vidu subjects：images 可本地、videos 仅 URL） */
+  media?: MediaSpec | MediaSpec[];
 }
 
 type Obj = Record<string, unknown>;
@@ -840,7 +840,7 @@ const VIDU_VIDEO: FamilySpec = {
       models: ["vidu-video-q4-preview", "vidu-video-q3-turbo", "vidu-video-q3", "vidu-video-q2", "vidu-video-q2-pro"],
       params: [
         A("subjects", T("主体集合（方式一；与 images/videos 二选一；prompt 中 @name 引用）", "Subjects (mode 1; either this or images/videos; referenced as @name)"), {
-          media: IMG("dataUrl", ["images"]),
+          media: [IMG("dataUrl", ["images"]), MEDIA("urlOnly", ["videos"])],
           fields: [
             F("name", "string", T("主体名称（prompt 中 @name 引用）", "Subject name (@name in prompt)"), { required: true }),
             F("images", "array", T("主体图片（最多 3 张，URL 或本地文件；与 videos 二选一）", "Subject images (up to 3; URL or local file; either this or videos)")),
@@ -1693,10 +1693,12 @@ export function paramHelpText(p: ParamSpec): string {
   else if (Array.isArray(p.required)) notes.push(zh ? `${p.required.join(" / ")} 必填` : `required for ${p.required.join(" / ")}`);
   if (p.models) notes.push(zh ? `仅 ${p.models.join(" / ")}` : `${p.models.join(" / ")} only`);
   if (p.media) {
+    const specs = Array.isArray(p.media) ? p.media : [p.media];
+    const anyLocal = specs.some((m) => m.encoding !== "urlOnly");
     notes.push(
-      p.media.encoding === "urlOnly"
-        ? zh ? "仅公网 URL" : "public URL only"
-        : zh ? "可传本地文件，自动编码" : "local files are encoded automatically",
+      anyLocal
+        ? zh ? "可传本地文件，自动编码" : "local files are encoded automatically"
+        : zh ? "仅公网 URL" : "public URL only",
     );
   }
   // 说明末尾已有括号时并进去（「参考图（≤10 张；必填）」），没有再加一对
