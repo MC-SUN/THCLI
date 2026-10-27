@@ -63,6 +63,8 @@ interface GenOptions {
   output?: string;
   timeout?: string;
   interval?: string;
+  /** 429 限流退避重试次数（提交段；轮询由 --timeout 兜底） */
+  retry?: string;
   apiKey?: string;
   alias?: string;
   area?: string;
@@ -189,6 +191,66 @@ function isRequestTimeout(err: unknown): boolean {
   return err instanceof Error && (err as { requestTimeout?: boolean }).requestTimeout === true;
 }
 
+function isNetworkError(err: unknown): boolean {
+  return err instanceof Error && (err as { networkError?: boolean }).networkError === true;
+}
+
+/** 429 退避重试默认次数 */
+const DEFAULT_RETRY = 3;
+/** 429 重试的累计等待预算（毫秒）：防止 Retry-After 巨值或过多重试把提交段拖死 */
+const RETRY_BUDGET_MS = 60_000;
+
+/** Retry-After 头解析：只认纯数字秒数（HTTP 日期形式极少用于限流，忽略），无/非法 → undefined */
+function parseRetryAfterSec(raw: string | null): number | undefined {
+  return raw !== null && /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : undefined;
+}
+
+function isRateLimited(err: unknown): boolean {
+  return err instanceof Error && (err as { rateLimited?: boolean }).rateLimited === true;
+}
+
+function retryAfterSecOf(err: unknown): number | undefined {
+  return (err as { retryAfterSec?: number }).retryAfterSec;
+}
+
+/** 第 attempt 次重试（1 起）前应等待的毫秒：1s/2s/4s，之后每次 4s；Retry-After 优先（单次也受总预算约束） */
+export function backoffMs(attempt: number, retryAfterSec?: number): number {
+  if (retryAfterSec !== undefined) return Math.min(retryAfterSec * 1000, RETRY_BUDGET_MS);
+  return 2 ** Math.min(attempt - 1, 2) * 1000;
+}
+
+/** 耗尽 429 重试后的错误：原错误信息（含 Request ID 等）+ 已重试次数与去向 */
+function rateLimitExhaustedError(err: unknown, attempts: number): Error {
+  return new Error(`${(err as Error).message}\n${t("gen.rateLimitExhausted", { n: attempts })}`);
+}
+
+/**
+ * 429 退避重试包装：只拦带 rateLimited 标记的错误（HTTP 429 = 请求未受理，重试无重复扣费风险；
+ * 超时/其它错误原样抛出）。重试耗尽或预算用尽时抛「原错误 + 已重试次数」。
+ * sleepFn 可注入（测试用）。
+ */
+export async function withRateLimitRetry<T>(
+  fn: () => Promise<T>,
+  retries: number,
+  onWait?: (info: { attempt: number; total: number; sec: number }) => void,
+  sleepFn: (ms: number) => Promise<void> = sleep,
+): Promise<T> {
+  let spent = 0;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!isRateLimited(err)) throw err;
+      if (attempt >= retries) throw attempt > 0 ? rateLimitExhaustedError(err, attempt) : err;
+      const waitMs = backoffMs(attempt + 1, retryAfterSecOf(err));
+      if (spent + waitMs > RETRY_BUDGET_MS) throw rateLimitExhaustedError(err, attempt);
+      spent += waitMs;
+      onWait?.({ attempt: attempt + 1, total: retries, sec: Math.round(waitMs / 1000) });
+      await sleepFn(waitMs);
+    }
+  }
+}
+
 /** 参数含空白 / 引号时按 POSIX 单引号转义，保证提示里的命令复制后可原样执行 */
 function shellQuote(arg: string): string {
   return /[\s'"]/.test(arg) ? `'${arg.replace(/'/g, `'\\''`)}'` : arg;
@@ -200,9 +262,9 @@ function retryCommand(): string {
   return `${bin === "main.cjs" ? "thcli" : bin} ${process.argv.slice(2).map(shellQuote).join(" ")}`;
 }
 
-/** 查询请求超时 → 补「任务已提交 + 重查命令」；其他错误原样抛出（调用方直接 throw 本函数结果） */
+/** 查询请求超时 / 网络中断 → 补「任务已提交 + 重查命令」；其他错误原样抛出（调用方直接 throw 本函数结果） */
 function queryTimeoutHint(err: unknown, cmd: string): Error {
-  if (isRequestTimeout(err)) return new Error(`${(err as Error).message}\n${t("gen.queryTimeout", { cmd })}`);
+  if (isRequestTimeout(err) || isNetworkError(err)) return new Error(`${(err as Error).message}\n${t("gen.queryTimeout", { cmd })}`);
   return err as Error;
 }
 
@@ -245,7 +307,10 @@ async function request(ctx: GenContext, method: "GET" | "POST", urlPath: string,
     if (name === "TimeoutError" || name === "AbortError") {
       throw requestTimeoutError(Math.round(timeoutMs / 1000));
     }
-    throw err;
+    // 网络层错误（undici 的 fetch failed / terminated：连接失败或响应中断）：
+    // 请求未完成、无 Request ID。挂标记由调用方分流——轮询跳过本轮、下载退避重试、
+    // 提交按「无法确认是否已创建」给指引（与超时同性质，不能盲目重试防重复扣费）
+    throw Object.assign(err as Error, { networkError: true });
   }
   const text = await resp.text();
   const respBody = parseGatewayBody(text);
@@ -270,6 +335,10 @@ async function request(ctx: GenContext, method: "GET" | "POST", urlPath: string,
       status: resp.status,
     });
     const err = new Error([t("gen.httpFailed", { status: resp.status, url: urlPath }), ...lines].join("\n"));
+    // 429：挂标记交给调用方退避重试（请求未受理，重试安全）；其它状态码原样抛
+    if (resp.status === 429) {
+      Object.assign(err, { rateLimited: true, retryAfterSec: parseRetryAfterSec(resp.headers.get("retry-after")) });
+    }
     // 401：除 Key 本身错误外，地域不匹配也会 401（默认 gz，国际站 Key 常在 sg）——
     // 本地存储的 Key 提示换地域，--api-key 临时指定的不涉及本地存储
     if (resp.status === 401 && !ctx.adHocKey) {
@@ -447,23 +516,34 @@ async function poll(ctx: GenContext, family: FamilySpec, apiId: string, model: s
   // Ctrl+C：任务已在云端跑，退出前把任务 ID 和重查命令留给用户（status --wait 也走这里）
   setInterruptHint(t("gen.interruptedWait", { id: taskId, cmd: statusCommandOf(apiId, taskId) }));
   let last = "";
+  let rateStreak = 0;
   try {
     for (;;) {
-      let raw: Obj;
+      let raw: Obj | undefined;
       try {
         raw = await queryOnce(ctx, spec);
+        rateStreak = 0;
       } catch (err) {
-        // 查询中断时任务已提交：给重查命令——笼统的「可重试」会误导用户重新提交、重复扣费
-        throw queryTimeoutHint(err, statusCommandOf(apiId, taskId));
+        // 429 / 网络瞬断（连接失败、响应中断）：都不算失败——任务已在云端，跳过本轮继续等
+        // （--timeout 总超时兜底）；每连续 3 次提示一句，避免长时间静默让用户以为卡死
+        if (isRateLimited(err) || isNetworkError(err)) {
+          rateStreak++;
+          if (rateStreak % 3 === 0 && !isJson()) console.error(t("gen.pollRateLimited", { n: rateStreak }));
+        } else {
+          // 查询中断时任务已提交：给重查命令——笼统的「可重试」会误导用户重新提交、重复扣费
+          throw queryTimeoutHint(err, statusCommandOf(apiId, taskId));
+        }
       }
-      const result = parseResponse(family, raw);
-      if (result.state === "succeeded" || result.state === "failed") {
-        return { result, raw };
-      }
-      if (result.state !== last) {
-        recordState(taskId, result.state, new Date());
-        if (!isJson()) console.error(t("gen.progress", { state: result.state }));
-        last = result.state;
+      if (raw) {
+        const result = parseResponse(family, raw);
+        if (result.state === "succeeded" || result.state === "failed") {
+          return { result, raw };
+        }
+        if (result.state !== last) {
+          recordState(taskId, result.state, new Date());
+          if (!isJson()) console.error(t("gen.progress", { state: result.state }));
+          last = result.state;
+        }
       }
       if (Date.now() >= deadline) {
         throw new Error(t("gen.timeout", { seconds, id: taskId, cmd: statusCommandOf(apiId, taskId) }));
@@ -481,6 +561,35 @@ function queryOnce(ctx: GenContext, spec: QuerySpec): Promise<Obj> {
 
 function statusCommandOf(apiId: string, taskId: string): string {
   return `thcli +gen status ${apiId} ${taskId} --wait`;
+}
+
+/**
+ * 下载产物用的 fetch：网络错误（连接失败 / 响应中断）与 HTTP 429/5xx 退避重试（1s/2s/4s，共 3 次）。
+ * 产物是已计费结果且 URL 幂等，重试安全；网络错误耗尽后抛带产物去向的提示（地址 12 小时内有效）。
+ * fetchFn / sleepFn 可注入（测试用）。
+ */
+export async function fetchWithRetry(
+  url: string,
+  fetchFn: (u: string) => Promise<Response> = fetch,
+  sleepFn: (ms: number) => Promise<void> = sleep,
+): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    let resp: Response | undefined;
+    try {
+      resp = await fetchFn(url);
+    } catch (err) {
+      if (attempt >= 2) throw new Error(t("gen.downloadNetworkFailed", { n: attempt, cause: (err as Error).message }));
+      await sleepFn(2 ** attempt * 1000);
+      continue;
+    }
+    if ((resp.status === 429 || resp.status >= 500) && attempt < 2) {
+      // 丢弃前消费响应体：undici 的连接不读完不归还连接池
+      await resp.body?.cancel().catch(() => {});
+      await sleepFn(2 ** attempt * 1000);
+      continue;
+    }
+    return resp;
+  }
 }
 
 /** 下载结果到目录，文件名取 URL 路径的 basename（去掉签名参数，重名加序号）；data URL（hex 音频转来）直接解码 */
@@ -754,9 +863,15 @@ async function resourceCreate(res: KlingResource, opts: ResourceOptions, globals
   let resp: Obj;
   try {
     setInterruptHint(t("gen.interruptedSubmit"));
-    resp = await request(ctx, "POST", res.createPath, body, WIDE_REQUEST_MS);
+    resp = await withRateLimitRetry(
+      () => request(ctx, "POST", res.createPath, body, WIDE_REQUEST_MS),
+      numberOpt(opts.retry, "--retry") ?? DEFAULT_RETRY,
+      (info) => {
+        if (!isJson()) console.error(t("gen.rateLimitRetry", info));
+      },
+    );
   } catch (err) {
-    if (!isRequestTimeout(err)) throw err;
+    if (!isRequestTimeout(err) && !isNetworkError(err)) throw err;
     throw new Error(`${(err as Error).message}\n${t("gen.requestTimeoutUnknown", { cmd: retryCommand() })}`);
   } finally {
     interruptHint = null;
@@ -775,24 +890,34 @@ async function resourceCreate(res: KlingResource, opts: ResourceOptions, globals
   // Ctrl+C：创建任务已在云端跑，退出前把任务 ID 和重查命令留给用户
   setInterruptHint(t("gen.interruptedWait", { id: taskId, cmd: resourceQueryCmd(res, taskId) }));
   let last = "";
+  let rateStreak = 0;
   try {
     for (;;) {
       if (Date.now() >= deadline) {
         throw new Error(t("gen.resource.timeout", { seconds, id: taskId, cmd: resourceQueryCmd(res, taskId) }));
       }
-      let raw: Obj;
+      let raw: Obj | undefined;
       try {
         raw = await request(ctx, "GET", res.queryPath(taskId), undefined, WIDE_REQUEST_MS);
+        rateStreak = 0;
       } catch (err) {
-        throw queryTimeoutHint(err, resourceQueryCmd(res, taskId));
+        // 429 / 网络瞬断：跳过本轮继续等（--timeout 总超时兜底）；每连续 3 次提示一句
+        if (isRateLimited(err) || isNetworkError(err)) {
+          rateStreak++;
+          if (rateStreak % 3 === 0 && !isJson()) console.error(t("gen.pollRateLimited", { n: rateStreak }));
+        } else {
+          throw queryTimeoutHint(err, resourceQueryCmd(res, taskId));
+        }
       }
-      assertKling(raw, "query");
-      const state = normalizeState(pick(raw, "data.task_status"));
-      if (state !== last && !isJson()) {
-        console.error(t("gen.progress", { state }));
-        last = state;
+      if (raw) {
+        assertKling(raw, "query");
+        const state = normalizeState(pick(raw, "data.task_status"));
+        if (state !== last && !isJson()) {
+          console.error(t("gen.progress", { state }));
+          last = state;
+        }
+        if (resourceOutcome(res, taskId, raw)) return;
       }
-      if (resourceOutcome(res, taskId, raw)) return;
       await sleep(interval);
     }
   } finally {
@@ -824,9 +949,15 @@ async function resourceDelete(res: KlingResource, opts: ResourceOptions, globals
   const id = opts[res.idKey]!;
   let raw: Obj;
   try {
-    raw = await request(ctx, "POST", res.deletePath, res.buildDelete(id), WIDE_REQUEST_MS);
+    raw = await withRateLimitRetry(
+      () => request(ctx, "POST", res.deletePath, res.buildDelete(id), WIDE_REQUEST_MS),
+      numberOpt(opts.retry, "--retry") ?? DEFAULT_RETRY,
+      (info) => {
+        if (!isJson()) console.error(t("gen.rateLimitRetry", info));
+      },
+    );
   } catch (err) {
-    if (!isRequestTimeout(err)) throw err;
+    if (!isRequestTimeout(err) && !isNetworkError(err)) throw err;
     // 重删已删的资源只会报「不存在」，无害
     throw new Error(`${(err as Error).message}\n${t("gen.requestTimeoutUnknown", { cmd: retryCommand() })}`);
   }
@@ -875,14 +1006,21 @@ async function generate(apiId: string, opts: GenOptions, globals: GlobalArgs): P
   try {
     // Ctrl+C 指引：同步 = 结果丢弃可重跑；异步提交段 = 结果未知（提交成功后 poll 会换成任务级指引）
     setInterruptHint(api.sync ? t("gen.interruptedSync", { cmd: retryCommand() }) : t("gen.interruptedSubmit"));
-    resp = await request(ctx, "POST", api.path, body, api.sync ? ctx.timeoutMs : WIDE_REQUEST_MS);
+    // 429 退避重试：限流时提示走 stderr（--json 下静默，不污染 stdout）
+    resp = await withRateLimitRetry(
+      () => request(ctx, "POST", api.path, body, api.sync ? ctx.timeoutMs : WIDE_REQUEST_MS),
+      numberOpt(opts.retry, "--retry") ?? DEFAULT_RETRY,
+      (info) => {
+        if (!isJson()) console.error(t("gen.rateLimitRetry", info));
+      },
+    );
     if (api.sync) {
       await finish(ctx, parseResponse(family, resp), resp, opts);
       return;
     }
   } catch (err) {
-    if (!isRequestTimeout(err)) throw err;
-    // 同步：未提交，重试无副作用；异步：没收到回包，无法确认是否已创建——
+    if (!isRequestTimeout(err) && !isNetworkError(err)) throw err;
+    // 超时 / 网络中断（均无回包）：同步 = 未提交，重试无副作用；异步 = 无法确认是否已创建——
     // 先查任务列表防重复提交（生成任务重复提交 = 重复扣费）
     const hint = api.sync
       ? t("gen.requestTimeoutRetry", { cmd: retryCommand() })
@@ -1130,6 +1268,7 @@ function runtimeFlags(api: ApiRef): string[] {
     ["--body <json|@file>", t("gen.opt.body")],
     ["--output <dir>", t("gen.opt.output")],
     ["--timeout <sec>", t("gen.opt.timeout", { default: DEFAULT_TIMEOUT_SEC })],
+    ["--retry <n>", t("gen.opt.retry", { default: DEFAULT_RETRY })],
     ...(api.sync
       ? []
       : ([
@@ -1224,7 +1363,8 @@ function withCommonOptions(cmd: Command, { omitOutput = false } = {}): Command {
   return withContextOptions(
     out
       .option("--timeout <sec>", t("gen.opt.timeout", { default: DEFAULT_TIMEOUT_SEC }))
-      .option("--interval <sec>", t("gen.opt.interval", { default: DEFAULT_INTERVAL_SEC })),
+      .option("--interval <sec>", t("gen.opt.interval", { default: DEFAULT_INTERVAL_SEC }))
+      .option("--retry <n>", t("gen.opt.retry", { default: DEFAULT_RETRY })),
   );
 }
 
@@ -1395,7 +1535,8 @@ export function registerGenCommands(program: Command, getGlobals: () => GlobalAr
       sub
         .command("delete")
         .description(t("gen.resource.delete.desc"))
-        .requiredOption(`--${res.idLabel} <id>`, t("gen.resource.opt.resourceId", { id: res.idLabel })),
+        .requiredOption(`--${res.idLabel} <id>`, t("gen.resource.opt.resourceId", { id: res.idLabel }))
+        .option("--retry <n>", t("gen.opt.retry", { default: DEFAULT_RETRY })),
     ).action(async (opts: ResourceOptions) => resourceDelete(res, opts, getGlobals()));
   }
 }

@@ -13,6 +13,8 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import { normalizeHelpArg } from "../../src/util/help-alias.js";
+import { backoffMs, fetchWithRetry, withRateLimitRetry } from "../../src/commands/gen.js";
+import { initLang } from "../../src/core/i18n.js";
 import { expandHome } from "../../src/util/expand-home.js";
 
 const CLI = path.join(process.cwd(), "dist", "main.cjs");
@@ -180,6 +182,166 @@ describe("normalizeHelpArg", () => {
 
   it("+gen 接口调用里的 help 值不改（如 --prompt help）", () => {
     assert.deepEqual(N("+gen", "wand/si-image/generation", "--prompt", "help"), ["+gen", "wand/si-image/generation", "--prompt", "help"]);
+  });
+});
+
+describe("429 退避重试", () => {
+  initLang("en");
+  const rl = (retryAfterSec?: number) => Object.assign(new Error("HTTP 429"), { rateLimited: true, retryAfterSec });
+
+  it("退避节奏 1s/2s/4s，之后每次 4s；Retry-After 优先且单次 ≤60s", () => {
+    assert.equal(backoffMs(1), 1_000);
+    assert.equal(backoffMs(2), 2_000);
+    assert.equal(backoffMs(3), 4_000);
+    assert.equal(backoffMs(4), 4_000);
+    assert.equal(backoffMs(9), 4_000);
+    assert.equal(backoffMs(1, 7), 7_000);
+    assert.equal(backoffMs(1, 120), 60_000);
+  });
+
+  it("429 重试后成功：节奏与提示回调正确", async () => {
+    let n = 0;
+    const waits: number[] = [];
+    const notes: string[] = [];
+    const out = await withRateLimitRetry(
+      async () => {
+        if (++n <= 2) throw rl();
+        return "ok";
+      },
+      3,
+      (i) => notes.push(`${i.attempt}/${i.total}/${i.sec}`),
+      async (ms) => {
+        waits.push(ms);
+      },
+    );
+    assert.equal(out, "ok");
+    assert.deepEqual(waits, [1_000, 2_000]);
+    assert.deepEqual(notes, ["1/3/1", "2/3/2"]);
+  });
+
+  it("Retry-After 优先；耗尽后报错含已重试次数；--retry 0 不重试", async () => {
+    let n = 0;
+    const waits: number[] = [];
+    await assert.rejects(
+      withRateLimitRetry(
+        async () => {
+          n++;
+          throw rl(9);
+        },
+        3,
+        undefined,
+        async (ms) => {
+          waits.push(ms);
+        },
+      ),
+      /Still rate limited after 3 retries/,
+    );
+    assert.equal(n, 4);
+    assert.deepEqual(waits, [9_000, 9_000, 9_000]);
+
+    let m = 0;
+    await assert.rejects(
+      withRateLimitRetry(
+        async () => {
+          m++;
+          throw rl();
+        },
+        0,
+        undefined,
+        async () => {},
+      ),
+      /HTTP 429/,
+    );
+    assert.equal(m, 1);
+  });
+
+  it("非 429 错误不重试；累计等待超 60s 预算提前耗尽", async () => {
+    let n = 0;
+    await assert.rejects(
+      withRateLimitRetry(
+        async () => {
+          n++;
+          throw new Error("boom");
+        },
+        3,
+        undefined,
+        async () => {},
+      ),
+      /boom/,
+    );
+    assert.equal(n, 1);
+
+    let k = 0;
+    const waits: number[] = [];
+    await assert.rejects(
+      withRateLimitRetry(
+        async () => {
+          k++;
+          throw rl(25);
+        },
+        5,
+        undefined,
+        async (ms) => {
+          waits.push(ms);
+        },
+      ),
+      /Still rate limited after 2 retries/,
+    );
+    assert.equal(k, 3);
+    assert.deepEqual(waits, [25_000, 25_000]);
+  });
+});
+
+describe("下载退避重试", () => {
+  it("网络错误重试后成功；429/5xx 可重试；网络错误耗尽抛带产物去向提示", async () => {
+    // 网络错误 1 次后成功，退避 1s
+    let n = 0;
+    const waits: number[] = [];
+    const ok = await fetchWithRetry(
+      "https://x/a.mp4",
+      async () => {
+        if (n++ === 0) throw new TypeError("fetch failed");
+        return new Response("ok");
+      },
+      async (ms) => {
+        waits.push(ms);
+      },
+    );
+    assert.equal(ok.status, 200);
+    assert.deepEqual(waits, [1_000]);
+
+    // 429 → 重试后 200
+    let m = 0;
+    const r429 = await fetchWithRetry(
+      "u",
+      async () => (m++ === 0 ? new Response("limited", { status: 429 }) : new Response("ok")),
+      async () => {},
+    );
+    assert.equal(r429.status, 200);
+
+    // 5xx 重试 2 次后仍 5xx → 返回响应由调用方报 downloadFailed（不吞状态码）
+    const waits5: number[] = [];
+    const r5 = await fetchWithRetry(
+      "u",
+      async () => new Response("boom", { status: 502 }),
+      async (ms) => {
+        waits5.push(ms);
+      },
+    );
+    assert.equal(r5.status, 502);
+    assert.deepEqual(waits5, [1_000, 2_000]);
+
+    // 网络错误耗尽 → 提示产物未丢、重跑命令可再下载
+    await assert.rejects(
+      fetchWithRetry(
+        "u",
+        async () => {
+          throw new TypeError("fetch failed");
+        },
+        async () => {},
+      ),
+      /Download failed \(network error after 2 retries\).*rerun the same status command/s,
+    );
   });
 });
 
