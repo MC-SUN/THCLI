@@ -40,6 +40,22 @@ function body(args: string[]): Record<string, unknown> {
   return (JSON.parse(out) as { Body: Record<string, unknown> }).Body;
 }
 
+/** 子命令级执行（不带 --dry-run，apis/tasks 等子命令未挂该选项） */
+function runSub(args: string[]): { out: string; code: number } {
+  try {
+    const out = execFileSync("node", [CLI, ...args], {
+      encoding: "utf8",
+      env: { ...process.env, THCLI_LANG: "en" },
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 60_000,
+    });
+    return { out, code: 0 };
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string; status?: number };
+    return { out: `${e.stdout ?? ""}${e.stderr ?? ""}`, code: e.status ?? 1 };
+  }
+}
+
 describe("+gen 接口字段 flag（--dry-run）", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "thcli-gen-"));
   const png = path.join(dir, "a.png");
@@ -354,6 +370,20 @@ describe("~ 展开", () => {
     assert.equal(expandHome("/abs/out"), "/abs/out");
     // ~user 形式不静默展开（曾会把 ./~user 建进当前目录或错拼到主目录下）
     assert.throws(() => expandHome("~root/out"), /cross-platform|absolute path/);
+  });
+});
+
+describe("+gen 子命令 apis", () => {
+  it("apis 列出接口；旧名 models 不再是子命令（按接口 ID 报错并指引 apis）", () => {
+    const apis = runSub(["+gen", "apis"]);
+    assert.equal(apis.code, 0, apis.out);
+    assert.match(apis.out, /wand\/vidu\/text-to-video/);
+    const detail = runSub(["+gen", "apis", "wand/si-image/generation"]);
+    assert.equal(detail.code, 0, detail.out);
+    assert.match(detail.out, /seedream-image-v5\.0-pro/);
+    const old = runSub(["+gen", "models"]);
+    assert.notEqual(old.code, 0);
+    assert.match(old.out, /\+gen apis/);
   });
 });
 

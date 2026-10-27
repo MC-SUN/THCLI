@@ -318,7 +318,7 @@ export const EN: Messages = {
   "doctor.all.desc": "End-to-end check: credentials, site and region, API connectivity, API key",
   "doctor.key.desc": "Diagnose a key: status, bindings, quota, IP allowlist",
   "doctor.endpoint.desc": "Diagnose an endpoint: run state and stop reason",
-  "doctor.model.desc": "Diagnose a model: whether it exists and has a usable endpoint; for +gen models also checks pay-as-you-go calls (model status / endpoint / billing / key / suggested command)",
+  "doctor.model.desc": "Diagnose a model: whether it exists and has a usable endpoint; for +gen apis also checks pay-as-you-go calls (model status / endpoint / billing / key / suggested command)",
   "doctor.plan.desc": "Diagnose a plan: status and usage",
   "opt.teamId": "Plan ID",
   "doctor.error.desc": "Look up an error code and its fix; omit the code to list all catalogued ones",
@@ -849,8 +849,8 @@ export const EN: Messages = {
   "doctor.route.billing.postpaid": "✅ postpaid on",
   "doctor.route.billing.free": "✅ free quota left {left} / {total} (expires {expire}); enable postpaid once it runs out",
   "doctor.route.billing.none": "❌ no free quota left and postpaid is off",
-  "doctor.route.hint.offline": "{model} is offline; switch to another model: thcli +gen models",
-  "doctor.route.hint.preOffline": "{model} is going offline soon; migrate to another model (thcli +gen models)",
+  "doctor.route.hint.offline": "{model} is offline; switch to another model: thcli +gen apis",
+  "doctor.route.hint.preOffline": "{model} is going offline soon; migrate to another model (thcli +gen apis)",
   "doctor.route.hint.endpointNotReady": "Endpoint {id} is {status}; see why: thcli doctor endpoint --id {id}",
   "doctor.route.row.thKey": "Pay-as-you-go key ({scope}): ",
   "doctor.route.none": "⚠️ No ready-to-use way to call it yet; complete these steps:",
@@ -1017,8 +1017,8 @@ export const EN: Messages = {
 
   "group.gen.desc": "Generate images / videos / 3D / audio (data plane, pay-as-you-go)",
   "gen.status.desc": "Query an async task by API + task ID; --wait (or --result) waits until it ends and prints the result",
-  "gen.models.desc": "Supported generation models and how they are called",
-  "gen.arg.api": "API ID (e.g. wand/vidu/text-to-video; see thcli +gen models for all)",
+  "gen.apis.desc": "Supported generation APIs and how they are called",
+  "gen.arg.api": "API ID (e.g. wand/vidu/text-to-video; see thcli +gen apis for all)",
   "gen.opt.help": "Show help; with an API, print only that API's usage and full parameters",
   "gen.opt.model": "Model ID (models of the API: {cmd}; optional for single-model APIs)",
   "gen.unknownApi": "{api} is not a known API; list all: {cmd}",
@@ -1173,8 +1173,8 @@ export const EN: Messages = {
   "gen.mode.asyncDetail": "async (waits until done by default; --no-wait submits only, then query with status)",
   "gen.detail.query": "Query task",
   "gen.status.idPlaceholder": "task-id",
-  "gen.models.arg.api": "API ID (omit to list all APIs)",
-  "gen.models.detailHint": "Parameters differ per API: see thcli +gen models <api-id> for the full parameter docs",
+  "gen.apis.arg.api": "API ID (omit to list all APIs)",
+  "gen.apis.detailHint": "Parameters differ per API: see thcli +gen apis <api-id> for the full parameter docs",
   "gen.detail.params": "API params",
   "gen.detail.path": "Submit path",
   "gen.detail.modelNote": "Model differences",
@@ -1199,7 +1199,7 @@ export const EN: Messages = {
   "gen.tasks.footer": "Fetch results: thcli +gen status <api-id> <task-id> --wait --output <dir> (result URLs expire in about 12 hours)",
   "gen.status.scope": "(task is from profile={profile} site={site}; querying with the account used at submission)",
   "gen.status.needModel": "No local record of task {id} (not submitted from this machine, or submitted before task records existed), so the model cannot be inferred: add --model <model used at submission> (tasks submitted on this machine are listed by thcli +gen tasks)",
-  "gen.models.footer": "Before calling, enable pay-as-you-go for the model in the console (+gen is pay-as-you-go only, plans are not used); video generation is relatively expensive per call.",
+  "gen.apis.footer": "Before calling, enable pay-as-you-go for the model in the console (+gen is pay-as-you-go only, plans are not used); video generation is relatively expensive per call.",
   "gen.detail.runtime": "Runtime options",
   "gen.detail.modelOptional": "Model ID (this API has a single model, can be omitted)",
   "gen.detail.modelRequired": "Model ID (required, see model list above)",
@@ -1216,7 +1216,7 @@ Parameters are organized per API: each API's flags = its request body fields (un
   Any field can be overridden or added with --param: key=value sends a string, key:=json sends JSON (e.g. --param n:=2); --body has the highest precedence
 
 Subcommands:
-  models [api-id]                  list all APIs (with call mode: sync / async); with an API ID, print its full parameters
+  apis [api-id]                    list all APIs (with call mode: sync / async); with an API ID, print its full parameters
   status <api-id> <task-id>        query an async task; --wait until it ends, --output <dir> downloads the result
   tasks                            list async tasks submitted from this machine (API / model / state / task ID), no need to remember IDs
   resource <kling-element|kling-voice> <create|get|delete>

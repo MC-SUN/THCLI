@@ -1839,7 +1839,7 @@ const apiRefOf = (d: ApiDecl): ApiRef => {
   };
 };
 
-/** 全部接口。顺序即 +gen models 的展示顺序 */
+/** 全部接口。顺序即 +gen apis 的展示顺序 */
 export const APIS: ApiRef[] = [
   // ---- 图像 ----
   apiRefOf({ id: "wand/hunyuan-image/v3-generation", family: HY_IMAGE_V3 }),

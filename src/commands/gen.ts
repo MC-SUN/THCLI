@@ -153,7 +153,7 @@ function diagnoseOf(ctx: GenContext): string | undefined {
 /** 按接口 ID 取接口，未知则报错并指向接口列表 */
 function requireApi(id: string): ApiRef {
   const api = apiOf(id);
-  if (!api) throw new Error(t("gen.unknownApi", { api: id, cmd: "thcli +gen models" }));
+  if (!api) throw new Error(t("gen.unknownApi", { api: id, cmd: "thcli +gen apis" }));
   return api;
 }
 
@@ -1366,8 +1366,8 @@ function modelsCommand(opts: { api?: string }): void {
     APIS.map((e) => [e.id, e.kind, e.models.join(","), e.sync ? t("gen.mode.sync") : t("gen.mode.async"), String(e.params.length + 1)]),
   );
   console.log("");
-  console.log(t("gen.models.detailHint"));
-  console.log(t("gen.models.footer"));
+  console.log(t("gen.apis.detailHint"));
+  console.log(t("gen.apis.footer"));
 }
 
 /** 数据面请求共用的上下文选项（Key / 地域 / 日志） */
@@ -1441,7 +1441,7 @@ function printApiBlock(api: ApiRef): void {
 }
 
 /** +gen 的子命令名（不是接口 ID） */
-const GEN_SUBCOMMANDS = new Set(["status", "tasks", "models", "resource", "help"]);
+const GEN_SUBCOMMANDS = new Set(["status", "tasks", "apis", "resource", "help"]);
 
 /**
  * 接口字段 flag 按接口动态挂载：解析前从 argv 里取 +gen 后的第一个位置参数，只挂该接口的字段。
@@ -1465,7 +1465,7 @@ export function registerGenCommands(program: Command, getGlobals: () => GlobalAr
     .helpOption(false)
     .argument("[api]", t("gen.arg.api"))
     .option("--help", t("gen.opt.help"))
-    .option("--model <model>", t("gen.opt.model", { cmd: "thcli +gen models" }));
+    .option("--model <model>", t("gen.opt.model", { cmd: "thcli +gen apis" }));
   // 接口字段：--<字段名>（下划线换连字符），只挂当前接口的；任意字段都可再用 --param / --body 覆盖
   const argvApi = apiFromArgv(process.argv.slice(2));
   if (argvApi === "unknown") {
@@ -1484,12 +1484,12 @@ export function registerGenCommands(program: Command, getGlobals: () => GlobalAr
         printApiBlock(ep);
         return;
       }
-      if (api) console.error(t("gen.unknownApi", { api, cmd: "thcli +gen models" }));
+      if (api) console.error(t("gen.unknownApi", { api, cmd: "thcli +gen apis" }));
       console.log(t("gen.help.text", { timeout: DEFAULT_TIMEOUT_SEC }));
       return;
     }
     if (!api) {
-      throw new Error(t("gen.needApi", { cmd: "thcli +gen models" }));
+      throw new Error(t("gen.needApi", { cmd: "thcli +gen apis" }));
     }
     await generate(api, opts, getGlobals());
   });
@@ -1531,10 +1531,10 @@ export function registerGenCommands(program: Command, getGlobals: () => GlobalAr
     .action(async (opts: TasksOptions) => tasksCommand(opts, getGlobals()));
 
   gen
-    .command("models")
+    .command("apis")
     .helpOption(true)
-    .description(t("gen.models.desc"))
-    .argument("[api]", t("gen.models.arg.api"))
+    .description(t("gen.apis.desc"))
+    .argument("[api]", t("gen.apis.arg.api"))
     .action((api: string | undefined) => modelsCommand({ api }));
 
   const resource = gen.command("resource").helpOption(true).description(t("gen.resource.desc"));

@@ -842,8 +842,8 @@ export const ZH: Messages = {
   "doctor.route.billing.postpaid": "✅ 已开后付费",
   "doctor.route.billing.free": "✅ 免费额度剩余 {left} / {total}（{expire} 到期），用完后需开后付费",
   "doctor.route.billing.none": "❌ 无剩余免费额度，且未开后付费",
-  "doctor.route.hint.offline": "{model} 已下线，换用其他模型：thcli +gen models",
-  "doctor.route.hint.preOffline": "{model} 即将下线，建议尽快迁移到其他模型（thcli +gen models）",
+  "doctor.route.hint.offline": "{model} 已下线，换用其他模型：thcli +gen apis",
+  "doctor.route.hint.preOffline": "{model} 即将下线，建议尽快迁移到其他模型（thcli +gen apis）",
   "doctor.route.hint.endpointNotReady": "接入点 {id} 当前状态 {status}，查原因：thcli doctor endpoint --id {id}",
   "doctor.route.row.thKey": "按量 Key（{scope}）：",
   "doctor.route.none": "⚠️ 暂无可直接使用的调用方式，按下面的步骤补齐：",
@@ -1013,8 +1013,8 @@ export const ZH: Messages = {
   // ── +gen ──
   "group.gen.desc": "生图 / 生视频 / 生 3D / 语音（数据面调用，按量计费）",
   "gen.status.desc": "查异步任务：按接口 + 任务 ID 查询；--wait（或 --result）等到结束并输出结果",
-  "gen.models.desc": "已支持的生成模型及其调用方式",
-  "gen.arg.api": "接口 ID（如 wand/vidu/text-to-video；thcli +gen models 查看全部）",
+  "gen.apis.desc": "已支持的生成接口及调用方式",
+  "gen.arg.api": "接口 ID（如 wand/vidu/text-to-video；thcli +gen apis 查看全部）",
   "gen.opt.help": "显示帮助；带接口时只输出该接口的用法与完整参数",
   "gen.opt.model": "模型 ID（接口支持的模型：{cmd}；单模型接口可省略）",
   "gen.unknownApi": "{api} 不是已知接口，查看全部接口：{cmd}",
@@ -1169,8 +1169,8 @@ export const ZH: Messages = {
   "gen.mode.asyncDetail": "异步（默认等到完成；--no-wait 只提交，之后用 status 查询）",
   "gen.detail.query": "查询任务",
   "gen.status.idPlaceholder": "任务ID",
-  "gen.models.arg.api": "接口 ID（不给则列出全部接口）",
-  "gen.models.detailHint": "各接口参数不同：thcli +gen models <接口ID> 查看该接口的全部参数与说明",
+  "gen.apis.arg.api": "接口 ID（不给则列出全部接口）",
+  "gen.apis.detailHint": "各接口参数不同：thcli +gen apis <接口ID> 查看该接口的全部参数与说明",
   "gen.detail.params": "接口参数",
   "gen.detail.path": "提交路径",
   "gen.detail.modelNote": "模型差异",
@@ -1195,7 +1195,7 @@ export const ZH: Messages = {
   "gen.tasks.footer": "取结果：thcli +gen status <接口ID> <任务ID> --wait --output <目录>（结果地址约 12 小时后失效）",
   "gen.status.scope": "（任务来自 profile={profile} site={site}，本次用提交时的账号查询）",
   "gen.status.needModel": "本机没有任务 {id} 的记录（不是在本机提交的，或提交时还没有任务记录功能），无法推断模型：请加 --model <提交时用的模型ID>（本机提交过的任务可用 thcli +gen tasks 查看）",
-  "gen.models.footer": "调用前需在控制台为模型开通后付费（+gen 暂只支持按量，不走套餐）；视频类单次费用较高。",
+  "gen.apis.footer": "调用前需在控制台为模型开通后付费（+gen 暂只支持按量，不走套餐）；视频类单次费用较高。",
   "gen.detail.runtime": "运行时选项",
   "gen.detail.modelOptional": "模型 ID（本接口仅 1 个模型，可省略）",
   "gen.detail.modelRequired": "模型 ID（必填，见上方模型列表）",
@@ -1212,7 +1212,7 @@ export const ZH: Messages = {
   任意字段都可用 --param 覆盖或补充：key=value 传字符串，key:=json 传 JSON（如 --param n:=2）；--body 优先级最高
 
 子命令:
-  models [接口ID]            列出全部接口（含调用方式：同步 / 异步）；带接口 ID 时输出该接口的完整参数
+  apis [接口ID]              列出全部接口（含调用方式：同步 / 异步）；带接口 ID 时输出该接口的完整参数
   status <接口ID> <任务ID>   查询异步任务；--wait 等到结束，--output <dir> 下载结果
   tasks                      列出本机提交过的异步任务（接口 / 模型 / 状态 / 任务 ID），不用记任务 ID
   resource <kling-element|kling-voice> <create|get|delete>
