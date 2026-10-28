@@ -163,13 +163,22 @@ export function extractBusinessCode(body: Obj | string): string | undefined {
   return undefined;
 }
 
-/** 人能读的错误说明：按当前语言取 message_zh / message，缺一个就用另一个 */
+/** 人能读的错误说明：按当前语言取 message_zh / message，缺一个就用另一个；中文环境下译文与原文并存 */
 export function extractErrorDetail(body: Obj | string): string {
   if (typeof body === "string") return body;
   const error = body["error"] as Obj | undefined;
   if (error) {
-    const msg = lang() === "zh" ? error["message_zh"] ?? error["message"] : error["message"] ?? error["message_zh"];
-    if (typeof msg === "string") return msg;
+    const zhRaw = error["message_zh"];
+    const zh = typeof zhRaw === "string" ? zhRaw : undefined;
+    const msgRaw = error["message"];
+    const msg = typeof msgRaw === "string" ? msgRaw : undefined;
+    if (lang() === "zh") {
+      // message_zh 可能是笼统翻译（如 502001 一律「后端语音服务返回业务错误」），原文才带修复线索，两者都给
+      if (zh) return msg && msg !== zh ? t("error.detailWithOriginal", { detail: zh, original: msg }) : zh;
+      if (msg) return msg;
+    } else if (msg ?? zh) {
+      return (msg ?? zh)!;
+    }
   }
   const resp = body["Response"] as Obj | undefined;
   const respError = resp?.["Error"] as Obj | undefined;

@@ -100,6 +100,8 @@ export interface ParamSpec {
   models?: string[];
   /** 字段值可以是本地文件时的编码规则；数组 = 不同子路径不同规则（如 vidu subjects：images 可本地、videos 仅 URL） */
   media?: MediaSpec | MediaSpec[];
+  /** flag 未传时仍写入请求体的默认值（如 minimax 音频的 output_format=url：hex 内联 base64，长音频会超响应体上限被上游拒）。全模型统一且不得与 models 同用；未来需按模型分派时，改为 model→value 并把注入挪到最终 model 确定之后 */
+  default?: string | number | boolean;
 }
 
 type Obj = Record<string, unknown>;
@@ -1333,7 +1335,7 @@ const TTS: FamilySpec = {
     ]),
     B("subtitle_enable", T("开启字幕（默认 false）", "Enable subtitles (default false)")),
     S("subtitle_type", T("字幕粒度（默认 sentence）", "Subtitle granularity (default sentence)"), { choices: ["sentence", "word"] }),
-    S("output_format", T("返回形式（默认 hex，加 --output 落盘；url 返回 24 小时有效链接）", "Output form (default hex, saved with --output; url returns a 24h link)"), { choices: ["hex", "url"] }),
+    S("output_format", T("返回形式：url 由 CLI 直接下载，长音频不受响应体上限限制；hex 内联 base64，长文本可能报 response size too large", "Output form: url is downloaded directly and long audio stays within the response limit; hex inlines base64 and may hit response size too large"), { choices: ["hex", "url"], default: "url" }),
     B("aigc_watermark", T("末尾添加音频节奏标识（默认 false）", "Append an audio watermark (default false)")),
   ],
   doc: "https://cloud.tencent.com/document/product/1823/135796",
@@ -1366,7 +1368,7 @@ const VOICE_CLONE: FamilySpec = {
     S("text", T("试听文本（≤1000 字符）", "Preview text (<=1000 chars)")),
     S("text_validation", T("样本预期文本（≤200 字符）", "Expected text of the sample (<=200 chars)")),
     N("accuracy", T("ASR 相似度阈值（默认 0.7）", "ASR similarity threshold (default 0.7)")),
-    S("output_format", T("试听音频返回形式（默认 hex）", "Preview audio form (default hex)"), { choices: ["hex", "url"] }),
+    S("output_format", T("试听音频返回形式", "Preview audio form"), { choices: ["hex", "url"], default: "url" }),
   ],
   doc: "https://cloud.tencent.com/document/product/1823/135798",
   validateBody: (body) => exactlyOne(body, ["audio_url", "audio_data"], "voice clone"),
@@ -1391,7 +1393,7 @@ const VOICE_DESIGN: FamilySpec = {
     PROMPT(T("音色描述（性别 / 年龄 / 特征 / 情绪 / 场景）", "Voice description (gender / age / traits / mood / scene)")),
     S("preview_text", T("试听文本（≤500 字符）", "Preview text (<=500 chars)"), { required: true }),
     S("voice_id", T("自定义音色 ID（不传自动生成）", "Custom voice ID (auto-generated if absent)")),
-    S("output_format", T("试听音频返回形式（默认 hex）", "Preview audio form (default hex)"), { choices: ["hex", "url"] }),
+    S("output_format", T("试听音频返回形式", "Preview audio form"), { choices: ["hex", "url"], default: "url" }),
     B("aigc_watermark", T("末尾添加音频节奏标识（默认 false）", "Append an audio watermark (default false)")),
   ],
   doc: "https://cloud.tencent.com/document/product/1823/135797",
@@ -1443,7 +1445,7 @@ const MINIMAX_MUSIC: FamilySpec = {
     S("lyrics", T("歌词（人声歌曲必填，≤3500 字符，带 [Verse] 等标签）", "Lyrics (required for vocal songs, <=3500 chars, with tags like [Verse])")),
     B("lyrics_optimizer", T("按 prompt 自动写词（默认 false）", "Write lyrics from the prompt (default false)")),
     B("is_instrumental", T("纯音乐（默认 false）", "Instrumental (default false)")),
-    S("output_format", T("返回形式（默认 hex）", "Output form (default hex)"), { choices: ["hex", "url"] }),
+    S("output_format", T("返回形式：url 避免长音频 base64 超限", "Output form: url avoids base64 size limits on long audio"), { choices: ["hex", "url"], default: "url" }),
     O("audio_setting", T("音频输出配置", "Audio output settings"), [
       F("sample_rate", "integer", T("采样率", "Sample rate"), { choices: [16000, 24000, 32000, 44100] }),
       F("bitrate", "integer", T("码率", "Bitrate"), { choices: [32000, 64000, 128000, 256000] }),
@@ -1691,6 +1693,7 @@ export function paramHelpText(p: ParamSpec): string {
   const notes: string[] = [];
   if (p.required === true) notes.push(zh ? "必填" : "required");
   else if (Array.isArray(p.required)) notes.push(zh ? `${p.required.join(" / ")} 必填` : `required for ${p.required.join(" / ")}`);
+  if (p.default !== undefined) notes.push(zh ? `默认 ${String(p.default)}` : `default ${String(p.default)}`);
   if (p.models) notes.push(zh ? `仅 ${p.models.join(" / ")}` : `${p.models.join(" / ")} only`);
   if (p.media) {
     const specs = Array.isArray(p.media) ? p.media : [p.media];

@@ -432,12 +432,16 @@ function encodeMediaValue(family: FamilySpec, p: ParamSpec, media: MediaSpec, va
   return media.encoding === "raw" ? b64 : `data:${mime};base64,${b64}`;
 }
 
-/** 接口字段 flag 的取值：解析 + 本地文件编码，返回请求体顶层字段 */
+/** 接口字段 flag 的取值：解析 + 本地文件编码，返回请求体顶层字段；flag 未传时写入注册表声明的默认值 */
 function apiFlagValues(api: ApiRef, opts: Obj): Obj {
   const values: Obj = {};
   for (const p of api.params) {
     const raw = opts[kebabToCamel(p.flag)];
-    if (raw === undefined) continue;
+    if (raw === undefined) {
+      // 默认值仍可被 --param / --body 覆盖（generate 里 base 先组装、layerBody 后合并）
+      if (p.default !== undefined) values[p.path] = p.default;
+      continue;
+    }
     let value = parseParamValue(p, String(raw));
     const specs = p.media ? (Array.isArray(p.media) ? p.media : [p.media]) : undefined;
     if (specs) for (const m of specs) value = mapMedia(value, m.keys, (s) => encodeMediaValue(api.family, p, m, s));
@@ -1328,6 +1332,7 @@ function apiJson(api: ApiRef): Obj {
         Models: p.models,
         Usage: paramUsage(p),
         Desc: paramText(p.desc),
+        Default: p.default,
       })),
     ],
     Runtime: runtimeFlags(api),

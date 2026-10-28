@@ -16,7 +16,7 @@
  *
  * 每个码归入一个类别，修复建议按类别给（locales 的 vendor.fix.<类别>）；个别码有专门的建议时单独覆盖。
  */
-import { extractBusinessCode, extractErrorDetail, gatewayErrorLines, type GatewayErrorScene } from "./errors.js";
+import { extractBusinessCode, gatewayErrorLines, type GatewayErrorScene } from "./errors.js";
 import { lang, t } from "./i18n.js";
 
 export type VendorId = "pixverse" | "kling" | "vidu" | "minimax" | "minimax-h3";
@@ -400,15 +400,20 @@ export function genErrorLines(body: Record<string, unknown> | string, requestId:
       return lines;
     }
   }
-  const messageFix = scene.vendor ? messageFixOf(scene.vendor, extractErrorDetail(body)) : undefined;
+  const errorObj = typeof body === "string" ? undefined : (body["error"] as Obj | undefined);
+  // 按「上游原文」匹配建议：不喂 extractErrorDetail——中文环境下它返回「译文（原文：…）」拼接串，^ 锚定正则会静默失配
+  const rawMessage =
+    typeof body === "string"
+      ? body
+      : [errorObj?.["message"], errorObj?.["message_zh"]].find((v): v is string => typeof v === "string" && v !== "");
+  const messageFix = scene.vendor ? messageFixOf(scene.vendor, rawMessage) : undefined;
   return gatewayErrorLines(body, requestId, scene, {
     fix: (code, fix) => messageFix ?? (scene.genModel ? genFixOf(code, scene.genModel) : undefined) ?? fix,
     extraLines: (fixShown) => {
       const lines: string[] = [];
-      const error = typeof body === "string" ? undefined : (body["error"] as Obj | undefined);
-      const upstreamCode = error?.["upstream_code"];
+      const upstreamCode = errorObj?.["upstream_code"];
       if (upstreamCode !== undefined && upstreamCode !== null && upstreamCode !== "") {
-        lines.push(`  ${t("gen.upstreamCode", { code: String(upstreamCode), status: String(error?.["upstream_status"] ?? scene.status ?? "-") })}`);
+        lines.push(`  ${t("gen.upstreamCode", { code: String(upstreamCode), status: String(errorObj?.["upstream_status"] ?? scene.status ?? "-") })}`);
         const info = scene.vendor ? lookupVendorError(scene.vendor, String(upstreamCode)) : undefined;
         if (info) {
           lines.push(`  ${t("vendor.code", { vendor: VENDOR_NAMES[info.vendor], code: info.code, reason: info.reason })}`);

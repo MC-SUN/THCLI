@@ -6,8 +6,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { diagnoseCommandOf, gatewayErrorLines, lookupError } from "../../src/core/errors.js";
+import { diagnoseCommandOf, extractErrorDetail, gatewayErrorLines, lookupError } from "../../src/core/errors.js";
 import { familyOf } from "../../src/core/gen-registry.js";
+import { initLang } from "../../src/core/i18n.js";
 import {
   extractVendorError,
   findVendorErrors,
@@ -143,7 +144,7 @@ describe("厂商错误展示", () => {
     assert.ok(fixLine(vendorErrorLines({ vendor: "kling", code: "1201", message: "PAR should be 1:1" }, "r")));
     assert.ok(fixLine(vendorErrorLines({ vendor: "kling", message: "PAR should be 1:1" }, "r")));
     const wrapped = genErrorLines(
-      { error: { code: "502001", message: "PAR should be 1:1", source: "upstream", upstream_code: "1201", upstream_status: 400 } },
+      { error: { code: "502001", message: "PAR should be 1:1", message_zh: "后端语音服务返回业务错误", source: "upstream", upstream_code: "1201", upstream_status: 400 } },
       "r",
       { vendor: "kling" },
     );
@@ -202,5 +203,31 @@ describe("报错时附 doctor 诊断命令", () => {
     const fix = lookupError("401001")!.fix;
     assert.match(fix, /chat-config set --type th/);
     assert.doesNotMatch(fix, /auth set/);
+  });
+});
+
+describe("网关错误说明：译文笼统时附上游原文（502001 缺陷回归）", () => {
+  // 缺陷场景：长文本 TTS 走 hex 输出被上游拒，message_zh 是笼统的「后端语音服务返回业务错误」，
+  // 原文「response size too large … please set Output.Type=url」才是排障线索，不能被译文折叠掉
+  it("中文环境：两者并存且不同 → 译文（原文：…）；缺失或相同则不附", () => {
+    initLang("zh");
+    assert.equal(
+      extractErrorDetail({ error: { code: "502001", message: "response size too large for base64 output, please set Output.Type=url", message_zh: "后端语音服务返回业务错误" } }),
+      "后端语音服务返回业务错误（原文：response size too large for base64 output, please set Output.Type=url）",
+    );
+    assert.equal(extractErrorDetail({ error: { message: "only english" } }), "only english");
+    assert.equal(extractErrorDetail({ error: { message: "same", message_zh: "same" } }), "same");
+    assert.equal(extractErrorDetail({ error: { message: "fallback", message_zh: "" } }), "fallback", "空译文按缺失处理，回退原文（旧行为会返回空串）");
+    assert.equal(extractErrorDetail("plain text"), "plain text");
+  });
+
+  it("英文环境：主显原文，不附中文译文", () => {
+    initLang("en");
+    assert.equal(extractErrorDetail({ error: { message: "m", message_zh: "中" } }), "m");
+    assert.equal(extractErrorDetail({ error: { message_zh: "中" } }), "中");
+  });
+
+  it("502001 的修复建议含 --output-format url", () => {
+    assert.match(lookupError("502001")!.fix, /--output-format url/);
   });
 });

@@ -247,6 +247,7 @@ function noteOf(p: ParamSpec): string {
   const notes: string[] = [];
   if (p.required === true) notes.push("**必填**");
   else if (Array.isArray(p.required)) notes.push(`**${p.required.join(" / ")} 必填**`);
+  if (p.default !== undefined) notes.push(`**默认 ${String(p.default)}**`);
   if (p.models) notes.push(`仅 ${p.models.join(" / ")}`);
   {
     const specs = mediaSpecs(p);

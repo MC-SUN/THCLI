@@ -93,6 +93,22 @@ describe("+gen 接口字段 flag（--dry-run）", () => {
     assert.deepEqual(b, { model: "seedream-image-v5.0-pro", prompt: "body", size: "1K", optimize_prompt_options: { mode: "fast" } });
   });
 
+  it("注册表默认值：flag 未传时写入请求体，4 个 minimax 音频接口 output_format 均默认 url；显式 flag / --param / --body 可覆盖", () => {
+    // 缺陷回归：默认不传时上游走 hex/base64，长文本（1320 字实测）响应体超限被拒 502 502001。
+    // 机制只测一个接口不够——4 个 default 是独立手写数据，任何一个漏写都要能发现
+    const cases: Array<[string, string[]]> = [
+      ["wand/minimax-tts/sync_tts", ["--model", "minimax-speech-2.8-hd", "--text", "hi", "--voice-setting", '{"voice_id":"male-qn-qingse"}']],
+      ["wand/minimax-tts/sync_clone", ["--model", "minimax-voice-clone", "--audio-url", "https://x/a.mp3"]],
+      ["wand/minimax-tts/sync_design", ["--model", "minimax-voice-design", "--prompt", "deep male", "--preview-text", "hi"]],
+      ["wand/minimax-music/generation", ["--model", "minimax-music-v3.0", "--lyrics", "[Verse] x"]],
+    ];
+    for (const [api, base] of cases) assert.equal(body([api, ...base])["output_format"], "url", api);
+    const tts = cases[0]!;
+    assert.equal(body([tts[0], ...tts[1], "--output-format", "hex"])["output_format"], "hex");
+    assert.equal(body([tts[0], ...tts[1], "--param", "output_format=hex"])["output_format"], "hex");
+    assert.equal(body([tts[0], ...tts[1], "--body", '{"output_format":"hex"}'])["output_format"], "hex");
+  });
+
   it("model 可由 --param / --body 指定，以最终请求体为准做接口白名单校验", () => {
     assert.equal(body(["wand/si-image/generation", "--prompt", "x", "--param", "model=seedream-image-v5.0-lite"])["model"], "seedream-image-v5.0-lite");
     assert.equal(

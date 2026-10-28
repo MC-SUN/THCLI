@@ -383,6 +383,8 @@ run_case aud-tts-09  server "field:output_format"           "TTS --output-format
   "$THCLI" +gen wand/minimax-tts/sync_tts --model minimax-speech-2.8-hd --text 你好 --voice-setting '{"voice_id":"male-qn-qingse"}' --output-format hex --verbose
 run_case aud-tts-11  server "field:aigc_watermark"          "TTS --aigc-watermark" \
   "$THCLI" +gen wand/minimax-tts/sync_tts --model minimax-speech-2.8-hd --text 你好 --voice-setting '{"voice_id":"male-qn-qingse"}' --aigc-watermark true --verbose
+run_case aud-tts-12  body   "field:output_format"           "TTS 默认 output_format=url（长文本 hex 会 502001）" \
+  "$THCLI" +gen wand/minimax-tts/sync_tts --model minimax-speech-2.8-hd --text 你好 --voice-setting '{"voice_id":"male-qn-qingse"}' --verbose
 run_case aud-clone-08 local "fail:之一"                     "clone 缺音频" \
   "$THCLI" +gen wand/minimax-tts/sync_clone --model minimax-voice-clone
 run_case aud-clone-02 server "field:tts_model"              "clone 本地 --audio-data + --tts-model" \

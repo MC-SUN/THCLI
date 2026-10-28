@@ -75,6 +75,20 @@ describe("注册表完整性", () => {
     }
   });
 
+  it("默认值声明合法：仅 value 类字段可设，类型与 valueType 一致，值在 choices 内，且不限定 models", () => {
+    for (const e of APIS) {
+      for (const p of e.params) {
+        if (p.default === undefined) continue;
+        assert.equal(p.kind, "value", `${e.id} --${p.flag}：object/array 字段不支持默认值`);
+        if (p.valueType) assert.equal(typeof p.default, p.valueType, `${e.id} --${p.flag}：默认值类型应与 valueType 一致`);
+        else assert.ok(typeof p.default === "string" || typeof p.default === "number", `${e.id} --${p.flag}：智能标量的默认值只能是 string/number`);
+        if (p.choices) assert.ok(p.choices.some((c) => c === p.default), `${e.id} --${p.flag}：默认值须在 choices 内`);
+        // apiFlagValues 注入 default 时不校验模型适配：带 models 的字段会让不适用的模型「没传却报错」（checkBody 拦截）
+        assert.ok(!p.models, `${e.id} --${p.flag}：default 字段不得限定 models——需按模型分派默认值时，先让注入挪到 model 确定之后`);
+      }
+    }
+  });
+
   it("接口字段清单与官方调用指南一致（防漏参 / 防多参）", () => {
     const cases: Array<[string, string[]]> = [
       ["wand/hunyuan-image/v3-generation", ["prompt", "images", "size", "seed", "footnote", "revise"]],
