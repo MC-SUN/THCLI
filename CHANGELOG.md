@@ -5,7 +5,7 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [1.0.2] - 2026-10-28
 
 ### 新增
 
@@ -24,6 +24,35 @@
   `+gen resource`（Kling 主体 / 音色）同样按 Kling 错误码表展示。
   网关错误补读 `upstream_code` / `upstream_status`、限流的 `Retry-After`、Anthropic 协议的 `reqid`。
   `thcli doctor error <码>` 在平台码之外也查厂商码（同值码跨厂商全部列出），`--vendor <厂商>` 列出某厂商全部收录。
+- **生成**：`thcli +gen <接口ID> --<字段> <值>`，参数按接口组织、flag 名即官方请求体字段名；共 33 个接口，
+  覆盖混元 / Seedream / WAND / Vidu / Kling / PixVerse / MiniMax 的生图、生视频、3D、世界模型与语音、音乐（按量计费）。
+  子命令：`apis [接口ID]`（接口列表 / 单接口完整参数）、`status <接口ID> <任务ID>`、`tasks`、`resource`（Kling 主体 / 音色）；
+  `thcli +gen <接口ID> --help` 只输出该接口的用法与参数，`thcli +gen help <子命令|接口ID>` 同义。
+  任意字段都可用 `--param key=value`（字符串）/ `key:=json`（JSON）或 `--body <json|@文件>` 覆盖，优先级：接口参数 < `--param` < `--body`；
+  `--dry-run` 只打印最终请求。异步任务自动轮询，`--output` 下载结果；同步接口发请求前打印"正在生成"提示。
+- 配套 skills：生成类 `thcli-image` / `thcli-video` / `thcli-audio` / `thcli-world`（随仓库 `skills/` 发布）。
+- 本机提交过的异步生成任务记在 `~/.thcli/gen-tasks.jsonl`（0600，不含 Key 与结果地址）；`+gen tasks` 列出本机任务
+  并自动刷新未完成的状态（最多 4 个并发，跳过提交超过 24 小时的），用来找回任务 ID；
+  `+gen status <接口ID> <任务ID>` 对本机任务可省 `--model`，并沿用提交时的账号 / 站点 / 地域。
+
+### 变更
+
+- `+chat --anthropic` 不再要求 `--plan`：按量走 `/v1/messages`，与 `--plan` 同用仍走 `/plan/anthropic/v1/messages`。
+- 数据面鉴权头统一为 `Authorization: Bearer`（含 Anthropic 协议，另带 `anthropic-version`），不再发 `x-api-key`。
+  `+chat`、`+gen`、`equip` 验证共用 `core/data-plane.ts`。
+- `+chat` / `+gen` 新增 `--verbose`：把实际请求（URL、请求头、请求体）与原始响应打到 stderr，Key 打码、Base64 截断。
+- `+chat --json`（非流式）：输出网关原始响应（思考内容 / 回答 / usage 都在内），便于脚本与 Agent 解析；与 `--stream` 同用会报错（SSE 拼不出完整 JSON）。
+- `+chat` 非流式请求超时 120 秒（`AbortSignal.timeout`），超时给出明确提示；流式不设总时限，避免误杀长回答。
+- `+chat --input` 可重复（多图 / 多视频），支持视频理解（`video_url`）与公网 URL 透传；
+  Responses 通道的图片改为文档规定的 `input_image` 结构。
+- `+chat --search` 的联网搜索按协议选写法：Chat 端点（按量 chat 与 `--plan` 套餐通道）用 `web_search_options`，
+  Responses 端点用 `tools`。
+- 错误码表收录 `AuthFailure.UnauthorizedOperation`。
+
+## [1.0.1] - 2026-10-14
+
+### 新增
+
 - **个人版套餐**：`thcli plan personal`（通用 / Hy Token Plan）——持有状态、可用模型、套餐详情、
   用量趋势（`usage tokens` / `usage credits`，`--range today|7day|30day` 默认 7day，或 `--from/--to`；
   粒度随跨度自动：≤3 天出分钟级总量 / 输入 / 输出，更长按日只出总量）、
@@ -31,12 +60,6 @@
   套餐 / 模型 / 共享 Key / 调用明细都在 tokenhub 产品下，按 `product` 参数区分系列；
   用量趋势走云监控的 `TpEPkg*` 指标。调用明细时间为 RFC3339（`--from/--to` 同格式）。
   购买 / 续费 / 升配 / 建删 Key 涉及开通购买，打印控制台链接。
-- **生成**：`thcli +gen <接口ID> --<字段> <值>`，参数按接口组织、flag 名即官方请求体字段名；共 35 个接口，
-  覆盖混元 / Seedream / WAND / Vidu / Kling / PixVerse / MiniMax 的生图、生视频、3D、世界模型与语音、音乐（按量计费）。
-  子命令：`models [接口ID]`（接口列表 / 单接口完整参数）、`status <接口ID> <任务ID>`、`tasks`、`resource`（Kling 主体 / 音色）；
-  `thcli +gen <接口ID> --help` 只输出该接口的用法与参数，`thcli +gen help <子命令|接口ID>` 同义。
-  任意字段都可用 `--param key=value`（字符串）/ `key:=json`（JSON）或 `--body <json|@文件>` 覆盖，优先级：接口参数 < `--param` < `--body`；
-  `--dry-run` 只打印最终请求。异步任务自动轮询，`--output` 下载结果；同步接口发请求前打印"正在生成"提示。
 - **Agent 一键接入**：`thcli equip`。两条路径：`thcli equip install [tool...]` 只把 Agent 程序装到本机
   （`npm install -g`），不登录、不选通道 / Key / 模型、不写任何配置（help 里排在最前）；裸 `thcli equip [tool...]`
   完整接入——缺程序的先装，再写服务地址、API Key、模型列表。另有 `equip list`（支持的工具与检测结果）、
@@ -53,26 +76,11 @@
   某个 Agent 写到一半失败时，本次写过的文件自动恢复原样；界面型 Agent 只显示打码 Key，确认后才显示完整 Key。
   企业专业版的模型取自所在地域的 `DescribeTokenPlanModelList`（只含在线模型），轻享版为 `auto`。
 - 配套 skills（thcli-agent）在 tokenhub-cli-skills 仓库发布。
-- 配套 skills：生成类 `thcli-image` / `thcli-video` / `thcli-audio` / `thcli-world`（随仓库 `skills/` 发布）。
-- 本机提交过的异步生成任务记在 `~/.thcli/gen-tasks.jsonl`（0600，不含 Key 与结果地址）；`+gen tasks` 列出本机任务
-  并自动刷新未完成的状态（最多 4 个并发，跳过提交超过 24 小时的），用来找回任务 ID；
-  `+gen status <接口ID> <任务ID>` 对本机任务可省 `--model`，并沿用提交时的账号 / 站点 / 地域。
 
 ### 变更
 
 - `auth login` 会打印当前站点与云 API 地域，并给出切换命令（`site use` / `profile set --region`），便于登录时核对是否站错了。
-- `+chat --anthropic` 不再要求 `--plan`：按量走 `/v1/messages`，与 `--plan` 同用仍走 `/plan/anthropic/v1/messages`。
-- 数据面鉴权头统一为 `Authorization: Bearer`（含 Anthropic 协议，另带 `anthropic-version`），不再发 `x-api-key`。
-  `+chat`、`+gen`、`equip` 验证共用 `core/data-plane.ts`。
-- `+chat` / `+gen` 新增 `--verbose`：把实际请求（URL、请求头、请求体）与原始响应打到 stderr，Key 打码、Base64 截断。
-- `+chat --json`（非流式）：输出网关原始响应（思考内容 / 回答 / usage 都在内），便于脚本与 Agent 解析；与 `--stream` 同用会报错（SSE 拼不出完整 JSON）。
-- `+chat` 非流式请求超时 120 秒（`AbortSignal.timeout`），超时给出明确提示；流式不设总时限，避免误杀长回答。
-- `+chat --input` 可重复（多图 / 多视频），支持视频理解（`video_url`）与公网 URL 透传；
-  Responses 通道的图片改为文档规定的 `input_image` 结构。
-- `+chat --search` 的联网搜索按协议选写法：Chat 端点（按量 chat 与 `--plan` 套餐通道）用 `web_search_options`，
-  Responses 端点用 `tools`。
 - 管控面客户端抽出公共骨架，两个产品共用同一套凭证刷新与调用日志。
-- 错误码表收录 `AuthFailure.UnauthorizedOperation`。
 
 ### 修复
 

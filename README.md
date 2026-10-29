@@ -157,7 +157,7 @@ thcli +chat --model kimi-k3 --input https://example.com/clip.mp4 "视频讲了�
 参数按接口组织：每个接口的参数就是官方接口的请求体字段，flag 名即字段名（下划线换连字符）；数组传 JSON 数组、对象传 JSON 对象，可收 Base64 的字段传本地路径会自动编码：
 
 ```shell
-thcli +gen models                                                  # 列全部接口
+thcli +gen apis                                                  # 列全部接口
 thcli +gen wand/hunyuan-image/v3-generation --prompt "一只橙色小猫" --output ./out
 thcli +gen wand/hunyuan-video/generation --prompt "小狗在草地上奔跑" --image ./first.jpg --output ./out
 thcli +gen api/3d/submit --model hy-3d-3.1 --prompt "一只卡通小狗" --output ./out
