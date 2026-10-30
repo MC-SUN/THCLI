@@ -6,6 +6,7 @@ dist/
 dist-test/
 dist-skills/
 *.tsbuildinfo
+output/
 
 # npm pack 的临时产物
 *.tgz
@@ -27,3 +28,7 @@ npm-debug.log*
 # 操作系统噪音
 .DS_Store
 Thumbs.db
+
+skills/
+tools/
+assets/

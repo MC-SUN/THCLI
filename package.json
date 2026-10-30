@@ -1,6 +1,6 @@
 {
   "name": "tencent-tokenhub-cli",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "THCLI — Tencent Cloud LLM platform command line interface",
   "type": "module",
   "bin": {
@@ -19,7 +19,7 @@
     "dev": "tsup --watch",
     "start": "node dist/main.cjs",
     "typecheck": "tsc --noEmit",
-    "test:only": "tsc -p tsconfig.test.json && node --test \"dist-test/test/**/*.test.js\"",
+    "test:only": "node -e \"require('fs').rmSync('dist-test',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node --test \"dist-test/test/**/*.test.js\"",
     "test": "npm run build && npm run test:only",
     "prepack": "npm run build",
     "prepublishOnly": "npm run typecheck && npm run test:only"
@@ -40,13 +40,13 @@
     "agent-skills",
     "tokenhub"
   ],
-  "dependencies": {},
   "devDependencies": {
     "@types/node": "^22.10.2",
     "commander": "^12.1.0",
     "tencentcloud-sdk-nodejs-tokenhub": "^4.1.294",
     "tsup": "^8.5.0",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "undici": "^6.29.1"
   },
   "license": "Apache-2.0"
 }

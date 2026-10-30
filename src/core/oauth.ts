@@ -96,20 +96,29 @@ export async function getTempCred(accessToken: string, site: string): Promise<Te
   };
 }
 
-/** 落盘凭证文件（0600） */
+/**
+ * 落盘凭证文件（0600）。
+ *
+ * keepIdentity 决定是否保留文件里既有的账号身份缓存：
+ *   - 续期（maybeRefreshCredential）传 true：同一账号只是换了临时密钥，身份不变，
+ *     但新临时密钥的 secretId 变了，必须把 identity.secretId 同步成新值，否则下次
+ *     resolveIdentity 会因 secretId 不符判缓存失效、每次续期后都多查一次 cam。
+ *   - 登录（loginCommand）传 false：这可能是换账号重登同一个 profile，旧 identity
+ *     属于上一个账号，必须丢弃，交给随后的 prefetchIdentity 用新密钥重新查。
+ */
 export function saveCredential(
   token: OAuthToken,
   cred: TempCredential,
   profile: string,
   site: string,
-  identity?: CredentialFile["identity"],
+  keepIdentity = false,
 ): void {
   fs.mkdirSync(CONFIG_DIR, { recursive: true });
   const path = credentialPath(profile, site);
-  // 账号身份跟账号绑定、不随密钥轮换而变，所以续期时要保留既有值——
-  // 这个函数会被 maybeRefreshCredential 反复调用，整份重写会把它冲掉，
-  // 于是每次续期后都要多查一次 cam
-  const keptIdentity = identity ?? readCredentialFile(profile, site).identity;
+  const prevIdentity = readCredentialFile(profile, site).identity;
+  // 续期：搬运旧身份，但把 secretId 对齐到本次新发的临时密钥，缓存键才跟得上密钥轮换
+  const keptIdentity =
+    keepIdentity && prevIdentity ? { ...prevIdentity, secretId: cred.secretId } : undefined;
   const payload: CredentialFile = {
     type: "oauth",
     secretId: cred.secretId,
@@ -145,7 +154,7 @@ export function saveCredential(
  * 下游错误——那个错误看起来与登录无关，用户很难联想到「其实是续期没成功」。
  * 所以这里要指名根因、给出下一步动作，而不是留一行不起眼的日志。
  */
-export async function maybeRefreshCredential(profile: string, site: string): Promise<void> {
+export async function maybeRefreshCredential(profile: string, site: string, quiet = false): Promise<void> {
   const path = credentialPath(profile, site);
   let cred: CredentialFile;
   try {
@@ -171,9 +180,11 @@ export async function maybeRefreshCredential(profile: string, site: string): Pro
     }
 
     const newCred = await getTempCred(info.accessToken, info.site);
-    saveCredential({ ...info, state: "" }, newCred, profile, site);
+    // 续期：同一账号换临时密钥，保留并对齐身份缓存（见 saveCredential）
+    saveCredential({ ...info, state: "" }, newCred, profile, site, true);
   } catch (err) {
     // 走 stderr：--json 模式下 stdout 必须是纯 JSON，混一行人话会让解析失败
+    if (quiet) return;
     const reason = err instanceof Error ? err.message : String(err);
     const expired = (cred.expiresAt ?? 0) - now <= 0;
     console.error(t(expired ? "cred.refreshFailedExpired" : "cred.refreshFailed", { reason }));

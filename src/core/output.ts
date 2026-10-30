@@ -77,3 +77,35 @@ export function emitJsonSafe(data: unknown): boolean {
   }
   return emitJson(sanitize(data));
 }
+
+/**
+ * 数据面 --verbose：把一次请求打到 stderr，便于与官方文档 / curl 对照。
+ * 只打码与截断，不改语义：密钥头只留首尾 4 位；Base64 等超长字符串只留开头并注明长度
+ * （一张图的 data URL 动辄几百 KB，原样打出会淹没终端）。stdout 不受影响，回答仍可管道处理。
+ */
+export function traceRequest(method: string, url: string, headers: Record<string, string>, body?: unknown): void {
+  console.error(`> ${method} ${url}`);
+  for (const [k, v] of Object.entries(headers)) {
+    const secret = /^(authorization|x-api-key)$/i.test(k);
+    console.error(`> ${k}: ${secret ? v.replace(/(Bearer )?(.+)/, (_m, p: string | undefined, key: string) => `${p ?? ""}${mask(key)}`) : v}`);
+  }
+  if (body !== undefined) console.error(`> ${redactLong(body)}`);
+}
+
+/** 数据面 --verbose：响应状态与正文（正文过长截断） */
+export function traceResponse(status: number, durationMs: number, text?: string): void {
+  console.error(`< HTTP ${status} (${durationMs} ms)`);
+  if (text !== undefined) console.error(`< ${text.slice(0, 4000)}`);
+}
+
+/** 超长字符串（data URL / 裸 Base64）只留开头 */
+export function redactLong(body: unknown): string {
+  return JSON.stringify(
+    body,
+    (_k, v: unknown) =>
+      typeof v === "string" && v.length > 200 && /^(data:|[A-Za-z0-9+/]{200})/.test(v)
+        ? `${v.slice(0, 40)}…(${v.length} chars)`
+        : v,
+    2,
+  );
+}

@@ -19,6 +19,7 @@ import {
   type GlobalArgs,
   parseGlobalArgs,
   readCredentialFile,
+  type ResolvedCredential,
   resolveEnv,
 } from "./credentials.js";
 import { credentialPath } from "./paths.js";
@@ -35,8 +36,13 @@ export interface Identity {
   appId: number;
 }
 
-/** 把身份并回凭证文件，保留其余字段 */
-function cacheIdentity(profile: string, site: string, identity: Identity): void {
+/** 把身份并回凭证文件，保留其余字段。secretId 一并写入，作为下次命中的校验键 */
+function cacheIdentity(
+  profile: string,
+  site: string,
+  identity: Identity,
+  secretId: string,
+): void {
   const path = credentialPath(profile, site);
   try {
     const current = readCredentialFile(profile, site);
@@ -45,7 +51,7 @@ function cacheIdentity(profile: string, site: string, identity: Identity): void 
     if (!current.secretId) {
       return;
     }
-    const next: CredentialFile = { ...current, identity };
+    const next: CredentialFile = { ...current, identity: { ...identity, secretId } };
     fs.writeFileSync(path, `${JSON.stringify(next, null, 4)}\n`, { mode: 0o600 });
   } catch {
     // 缓存失败不影响本次调用，下次再查一遍即可
@@ -53,13 +59,20 @@ function cacheIdentity(profile: string, site: string, identity: Identity): void 
 }
 
 /**
- * 取当前凭证的账号身份。命中凭证文件缓存则直接返回，否则查 cam 并缓存。
+ * 用一份已解析的凭证取账号身份——身份解析的唯一实现。
+ *
+ * 命中缓存的条件不只是「文件里有 identity」，还必须「缓存的 secretId 等于本次实际
+ * 生效的主凭证 secretId」：换账号（文件内换人 / 命令行 / 环境变量覆盖）密钥必变，
+ * secretId 不符就判缓存失效、拿当前密钥重查，杜绝「密钥是 B、uin 却返回旧的 A」。
+ *
+ * 只有凭证来自文件（source=file）才把结果写回文件：命令行 / 环境变量是临时覆盖，
+ * 把它们查出的身份落盘会污染该 profile 的持久凭证（下次无覆盖时读到的是错的）。
+ *
  * 查询失败时抛错——调用方（monitor）没有 uin 就没法查指标，不能静默降级。
  */
-export async function resolveIdentity(args: GlobalArgs): Promise<Identity> {
-  const cred = parseGlobalArgs(args);
+export async function resolveIdentityWithCred(cred: ResolvedCredential): Promise<Identity> {
   const cached = cred.raw.identity;
-  if (cached?.uin) {
+  if (cached?.uin && cached.secretId === cred.secretId) {
     return cached;
   }
 
@@ -92,6 +105,17 @@ export async function resolveIdentity(args: GlobalArgs): Promise<Identity> {
     ownerUin: resp.OwnerUin ?? resp.Uin,
     appId: resp.AppId ?? 0,
   };
-  cacheIdentity(cred.profile, cred.site, identity);
+  // 仅文件源落盘：cli/env 临时覆盖不写回，避免污染 profile 的持久凭证
+  if (cred.source === "file") {
+    cacheIdentity(cred.profile, cred.site, identity, cred.secretId);
+  }
   return identity;
+}
+
+/**
+ * 取当前凭证的账号身份。密钥走整包三选一（命令行 > 环境变量 > 文件），
+ * 身份与「本次实际签名用的那把密钥」严格同源。
+ */
+export async function resolveIdentity(args: GlobalArgs): Promise<Identity> {
+  return resolveIdentityWithCred(parseGlobalArgs(args));
 }

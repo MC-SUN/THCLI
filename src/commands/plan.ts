@@ -17,6 +17,7 @@ import { confirm } from "../core/prompt.js";
 import { emitJson, emitJsonSafe } from "../core/output.js";
 import { t } from "../core/i18n.js";
 import { assertRfc3339, utcRangeMinutesAgo } from "../core/time.js";
+import { registerPersonalPlanCommands } from "./plan-personal.js";
 
 /**
  * 可购买的套餐类型。与 ChargeType/BindType 不同，这份本地副本经实测与后端一致
@@ -104,32 +105,30 @@ async function infoCommand(opts: Record<string, string>, globals: GlobalArgs): P
   }
 }
 
-async function modelsCommand(opts: Record<string, string>, globals: GlobalArgs): Promise<void> {
-  if (!opts["teamId"]) throw new Error(t("plan.needTeamId"));
+/**
+ * 套餐可用模型：`DescribeTokenPlanModelList`（**无参**）。
+ *
+ * 这个清单是**专业版（enterprise）固定**的、所有专业版套餐一致，与 TeamId 无关，故不要再传 `--team-id`。
+ * 轻享版（enterprise-auto）不在此列——它只有 `auto` 一个（想限定到单把 Key 用 `plan key update --allowed-models`）。
+ */
+async function modelsCommand(globals: GlobalArgs): Promise<void> {
   const client = buildClient(globals);
-  const p = await fetchPlan(client, opts["teamId"]);
-  const pkg = (p["PackageInfo"] ?? {}) as Record<string, unknown>;
-  const models = (pkg["AllowedModels"] ?? pkg["Models"]) as string[] | undefined;
+  const resp = await client.call("DescribeTokenPlanModelList", {});
+  const models = (resp["Models"] as Array<Record<string, unknown>> | undefined) ?? [];
 
-  if (
-    emitJson({
-      TeamId: p["TeamId"],
-      Name: p["Name"],
-      ProductType: p["ProductType"],
-      AllowedModels: models ?? [],
-    })
-  ) {
-    return;
-  }
+  if (emitJson({ Models: models })) return;
 
-  console.log(t("plan.models.header", { name: p["Name"] ?? "", type: p["ProductType"] ?? "" }));
-  if (!models?.length) {
-    console.log(`  ${t("plan.models.emptyNote")}`);
-    return;
-  }
-  for (const m of models) {
-    console.log(`  ${m}`);
-  }
+  console.log(t("plan.models.header", { count: models.length }));
+  printTable(
+    [t("plan.models.col.id"), t("plan.models.col.name"), t("plan.models.col.status"), t("plan.models.col.tags")],
+    models.map((m) => [
+      String(m["ModelId"] ?? ""),
+      String(m["DisplayName"] ?? ""),
+      String(m["ModelStatus"] ?? ""),
+      Array.isArray(m["Tags"]) ? (m["Tags"] as string[]).join(",") : "",
+    ]),
+  );
+  console.log(t("plan.models.note"));
 }
 
 /**
@@ -586,8 +585,7 @@ export function registerPlanCommands(program: Command, getGlobals: () => GlobalA
   plan
     .command("models")
     .description(t("plan.models.desc"))
-    .requiredOption("--team-id <id>", t("opt.teamId"))
-    .action(async (opts) => modelsCommand(opts, getGlobals()));
+    .action(async () => modelsCommand(getGlobals()));
 
   plan
     .command("buy")
@@ -711,4 +709,7 @@ export function registerPlanCommands(program: Command, getGlobals: () => GlobalA
     .requiredOption("--id <id>", "ApiKeyId")
     .option("--yes", t("opt.yes"))
     .action(async (opts) => keyDeleteCommand(opts, getGlobals()));
+
+  // 个人版（通用 / Hy）：接口都在 tokenhub，单独成文件
+  registerPersonalPlanCommands(plan, getGlobals);
 }

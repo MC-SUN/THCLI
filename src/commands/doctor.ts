@@ -5,7 +5,7 @@ import { Command } from "commander";
 import { isIP } from "node:net";
 
 import { buildClient } from "../core/client.js";
-import { allowedRegions, allowedSites, DEFAULT_REGION } from "../core/config.js";
+import { allowedRegions, allowedSites, areaCloudRegion, cloudRegionArea, DEFAULT_REGION } from "../core/config.js";
 import {
   mask,
   parseGlobalArgs,
@@ -13,8 +13,13 @@ import {
   resolveSite,
   type GlobalArgs,
 } from "../core/credentials.js";
-import { loadDataConfig, resolveRegionKey } from "../core/keystore.js";
+import { DEFAULT_ALIAS, loadDataConfig, resolveRegionKey } from "../core/keystore.js";
 import { CLOUD_CODES, ERROR_CODES, GATEWAY_CODES, lookupError } from "../core/errors.js";
+import { apiSupportsModel, APIS } from "../core/gen-registry.js";
+import { listDataPlaneKeys } from "../core/provision.js";
+import { keyCoversModel, quotaExhausted, serviceCheck, type ServiceCheck } from "../core/gen-check.js";
+import { matchesMasked } from "../core/agent/key-picker.js";
+import { findVendorErrors, genFixOf, lookupVendorError, vendorCodes, VENDOR_NAMES, VENDORS, type VendorErrorInfo, type VendorId } from "../core/gen-errors.js";
 import { human, pad, stopReasonAdvice } from "../core/format.js";
 import { emitJson, emitJsonSafe, isJson } from "../core/output.js";
 import { t } from "../core/i18n.js";
@@ -155,6 +160,191 @@ async function allCommand(globals: GlobalArgs): Promise<void> {
   console.log(
     t("doctor.all.footer"),
   );
+}
+
+// ── +gen 模型诊断（doctor model 对 +gen 模型追加）──
+// +gen 只走按量（th Key），沿请求链路逐项确认：模型未下线 → 接入点在运行 → 能计费（免费额度 / 后付费）
+// → 本地有对应地域 / 别名的 Key → 这把 Key 在云端启用、范围含该模型、额度未用完。给出可用的 +gen 接口写法或补齐步骤。
+
+type Row = Record<string, unknown>;
+
+/**
+ * 本地按量 Key 在云端的状态：
+ * ok 可用 / missing 本地没配 / disabled 已停用 / noScope 范围不含该模型 / quotaExceeded 额度用完或停用 /
+ * notMatched 云端列表里对不上（已删除或属于其他账号） / ambiguous 打码形式撞上多把 / error 查询失败
+ */
+type KeyState = "ok" | "missing" | "disabled" | "noScope" | "quotaExceeded" | "notMatched" | "ambiguous" | "error";
+
+type KeyCheck = { Scope: string; State: KeyState; KeyId?: string; Name?: string; Error?: string; Targets?: string[] };
+
+/** doctor model 选项 */
+interface ModelCheckOptions {
+  id: string;
+}
+
+/** +gen 模型诊断的结论（JSON 输出的 GenRoute 即此结构） */
+interface GenRouteResult {
+  /** 该模型对应的 +gen 接口 */
+  GenApis: string[];
+  /** 服务侧：模型状态、接入点、计费 */
+  Service: ServiceCheck;
+  /** 本地按量 Key 在云端的状态 */
+  Key: KeyCheck;
+  /** 推荐的 +gen 调用写法（每个接口一条）；有阻断问题时为空 */
+  Recommend: string[];
+  /** 补齐配置的步骤 */
+  Hints: string[];
+}
+
+/** genRoute 的输入：doctor model 已查好的模型与接入点，及同地域的云 API 客户端（不重复查） */
+interface GenRouteInput {
+  model: string;
+  genApis: string[];
+  /** 按量诊断的数据面地域（由 --region 反查，默认 gz） */
+  area: string;
+  /** 模型状态；undefined 表示该地域查不到模型 */
+  modelStatus: string | undefined;
+  endpoints: Row[];
+  client: ReturnType<typeof buildClient>;
+}
+
+/**
+ * 本地按量 Key 对上云端那把再检查：按打码形式的前后缀比对，不取明文；
+ * 撞上多把（极少见）时不猜，报 ambiguous。
+ */
+async function checkPaygKey(input: GenRouteInput, globals: GlobalArgs, localKey: string, endpointIds: string[]): Promise<Omit<KeyCheck, "Scope">> {
+  try {
+    const matches = (await listDataPlaneKeys(globals, input.area)).filter((k) => matchesMasked(k.ApiKey, localKey));
+    if (!matches.length) return { State: "notMatched" };
+    if (matches.length > 1) return { State: "ambiguous" };
+    const key = matches[0]! as unknown as Row;
+    // 部分绑定时带上现有目标：范围不够时的 key scope 命令要全量覆盖，提示里直接带齐
+    const targets = Array.isArray(key["BindingItems"]) ? (key["BindingItems"] as Row[]).map((b) => String(b["ResourceId"] ?? "")).filter(Boolean) : [];
+    const base = { KeyId: String(key["ApiKeyId"] ?? ""), Name: String(key["Name"] ?? ""), Targets: targets };
+    if (String(key["Status"] ?? "") !== "enable") return { ...base, State: "disabled" };
+    if (!keyCoversModel(key, input.model, endpointIds)) return { ...base, State: "noScope" };
+    const detailResp = await input.client.call("DescribeApiKey", { Platform: "maas", ApiKeyId: base.KeyId });
+    // 详情里带明文，只取额度字段，不保留、不输出
+    const detail = (detailResp["ApiKeyInfo"] ?? detailResp) as Row;
+    return { ...base, State: quotaExhausted(detail) ? "quotaExceeded" : "ok" };
+  } catch (err) {
+    return { State: "error", Error: (err as Error).message };
+  }
+}
+
+/**
+ * +gen 模型诊断：按量是否已开后付费、本地按量 Key（{area}/default，area 由 --region 反查、默认 gz，
+ * 与 +gen / +chat 不传 --area 时取 Key 的默认规则一致）在云端能否调它，给出推荐写法与补齐步骤。
+ * 全程只读，不发模型调用。
+ */
+async function genRoute(input: GenRouteInput, globals: GlobalArgs): Promise<GenRouteResult> {
+  const { model, genApis, area, modelStatus, endpoints } = input;
+  const site = resolveSite(globals);
+  const alias = DEFAULT_ALIAS;
+  const scope = `${site}/${area}/th/${alias}`;
+  const service = serviceCheck(model, modelStatus, endpoints);
+  const endpointIds = endpoints.map((e) => String(e["EndpointId"] ?? "")).filter(Boolean);
+
+  let key: KeyCheck;
+  try {
+    const localKey = resolveRegionKey(loadDataConfig(resolveProfile(globals)), site, area, "th", alias);
+    key = { Scope: scope, ...(localKey ? await checkPaygKey(input, globals, localKey, endpointIds) : { State: "missing" as const }) };
+  } catch (err) {
+    key = { Scope: scope, State: "error", Error: (err as Error).message };
+  }
+
+  // 推荐：服务侧可调，且本地 Key 没有确定的阻断问题（对不上 / 查询失败只提示、不拦推荐）
+  const keyBlocks = key.State === "missing" || key.State === "disabled" || key.State === "noScope" || key.State === "quotaExceeded";
+  const recommend =
+    service.State === "ok" && !keyBlocks ? genApis.map((ep) => `thcli +gen ${ep} --model ${model}`) : [];
+
+  const hints = serviceHints(service, model, area);
+  // 模型查不到 / 已下线时，Key 范围 / 额度提示没有意义（提示里的模型本身就不可调）
+  if (service.State !== "notFound" && service.State !== "offline") {
+    const keyHint: Partial<Record<KeyState, string>> = {
+      missing: t("doctor.route.hint.thKey", { area, alias }),
+      disabled: t("doctor.route.hint.keyDisabled", { id: key.KeyId ?? "" }),
+      noScope: t("doctor.route.hint.keyScope", { id: key.KeyId ?? "", targets: [...(key.Targets ?? []), model].join(",") }),
+      quotaExceeded: t("doctor.route.hint.keyQuota", { id: key.KeyId ?? "" }),
+      notMatched: t("doctor.route.hint.keyNotMatched", { region: areaCloudRegion(area) }),
+    };
+    if (keyHint[key.State]) hints.push(keyHint[key.State]!);
+  }
+  return { GenApis: genApis, Service: service, Key: key, Recommend: recommend, Hints: hints };
+}
+
+/** 停止原因属于计费（没有免费包 / 免费额度用完）时，开后付费即可恢复 */
+const BILLING_STOP_REASONS = new Set(["NO_FREE_PACKAGE", "FREE_QUOTA_EXHAUSTED"]);
+
+/** 服务侧阻断项的补齐步骤；预下线额外提示迁移 */
+function serviceHints(s: ServiceCheck, model: string, area: string): string[] {
+  const activate = t("doctor.route.hint.activate", { model });
+  const hints: string[] = [];
+  switch (s.State) {
+    case "notFound":
+      // 该地域没有这个模型（如 sg 未上线）：提示换地域，否则用户只看到「查不到」不知道下一步
+      hints.push(t("doctor.route.hint.notFoundArea", { model, area }));
+      break;
+    case "offline":
+      hints.push(t("doctor.route.hint.offline", { model }));
+      break;
+    case "noEndpoint":
+    case "noBilling":
+      hints.push(activate);
+      break;
+    case "notReady": {
+      // VIRTUAL：平台预置但未开通，开后付费即转为可用；计费类停止原因同理；其他原因按 stopReason 给建议
+      const id = s.EndpointId ?? "";
+      const reason = s.StopReason ?? "";
+      if (s.EndpointStatus === "VIRTUAL" || BILLING_STOP_REASONS.has(reason)) hints.push(activate);
+      else hints.push((reason && stopReasonAdvice(reason, id)) || t("doctor.route.hint.endpointNotReady", { id, status: s.EndpointStatus ?? "" }));
+      break;
+    }
+  }
+  if (s.ModelStatus === "pre-offline") hints.push(t("doctor.route.hint.preOffline", { model }));
+  return hints;
+}
+
+function modelStatusText(s: ServiceCheck): string {
+  if (s.State === "notFound") return t("doctor.route.model.notFound");
+  if (s.State === "offline") return t("doctor.route.model.offline", { status: s.ModelStatus ?? "" });
+  if (s.ModelStatus === "pre-offline") return t("doctor.route.model.preOffline");
+  return t("doctor.route.model.ok", { status: s.ModelStatus || "-" });
+}
+
+function endpointText(s: ServiceCheck): string {
+  if (s.State === "noEndpoint") return t("doctor.route.endpoint.none");
+  const vars = { id: s.EndpointId ?? "", status: s.EndpointStatus ?? "", reason: s.StopReason ? `, ${s.StopReason}` : "" };
+  return t(s.State === "notReady" ? "doctor.route.endpoint.notReady" : "doctor.route.endpoint.ok", vars);
+}
+
+function billingText(s: ServiceCheck): string {
+  if (s.Billing === "postpaid") return t("doctor.route.billing.postpaid");
+  if (s.Billing === "free" && s.FreeQuota) {
+    const { Used, Total, ExpireTime } = s.FreeQuota;
+    return t("doctor.route.billing.free", { left: (Total - Used).toLocaleString(), total: Total.toLocaleString(), expire: ExpireTime?.slice(0, 10) ?? "-" });
+  }
+  return t("doctor.route.billing.none");
+}
+
+function printGenRoute(r: GenRouteResult): void {
+  const { Service: s, Key: key } = r;
+  const keyText = t(`doctor.route.key.${key.State}`, { name: key.Name || t("agent.key.unnamed"), id: key.KeyId ?? "", message: key.Error ?? "" });
+  console.log(t("doctor.route.title"));
+  console.log(`   ${t("doctor.route.row.apis")}${r.GenApis.join(", ")}`);
+  console.log(`   ${t("doctor.route.row.model")}${modelStatusText(s)}`);
+  // 链路上靠后的环节只在前面通过时才有意义：查不到 / 已下线就不再列接入点，接入点没运行就不再列计费
+  if (s.State !== "notFound" && s.State !== "offline") console.log(`   ${t("doctor.route.row.endpoint")}${endpointText(s)}`);
+  if (s.State === "ok" || s.State === "noBilling") console.log(`   ${t("doctor.route.row.billing")}${billingText(s)}`);
+  console.log(`   ${t("doctor.route.row.thKey", { scope: key.Scope })}${keyText}`);
+  if (r.Recommend.length) {
+    console.log(t("doctor.route.recommendHeader"));
+    for (const cmd of r.Recommend) console.log(`   ${cmd}`);
+    if (r.Hints.length) console.log(t("doctor.route.alsoNote"));
+  } else {
+    console.log(t("doctor.route.none"));
+  }
+  for (const hint of r.Hints) console.log(`   - ${hint}`);
 }
 
 /**
@@ -308,58 +498,68 @@ async function endpointCommand(opts: Record<string, string>, globals: GlobalArgs
     );
 }
 
-async function modelCommand(opts: Record<string, string>, globals: GlobalArgs): Promise<void> {
-  if (!opts["id"]) throw new Error(t("arg.missing", { command: "doctor model", args: "--id" }));
+/**
+ * 诊断模型：是否存在、有无可用接入点；若是 +gen 模型，再追加按量调用诊断（后付费 / 本地按量 Key /
+ * 推荐的 +gen 写法）。
+ *
+ * 云 API 地域统一由全局 --region 决定（两类模型同一语义）；+gen 按量诊断的数据面地域由 --region
+ * 反查得出（ap-guangzhou→gz、ap-singapore→sg，默认 gz），与 +gen / +chat 的 --area 一一对应：
+ * 用 +gen --area sg / +chat --area sg 调用的，传 --region ap-singapore 即可诊断同一地域。
+ */
+async function modelCommand(opts: ModelCheckOptions, globals: GlobalArgs): Promise<void> {
+  const id = opts.id;
+  if (!id) throw new Error(t("arg.missing", { command: "doctor model", args: "--id" }));
+  const site = resolveSite(globals);
+  const genApis = APIS.filter((e) => apiSupportsModel(e, id)).map((e) => e.id);
+  const area = cloudRegionArea(globals.region);
+  if (genApis.length && !allowedRegions(site).includes(area)) {
+    throw new Error(t("chat.badArea", { site, area, options: allowedRegions(site).join(", ") }));
+  }
   const client = buildClient(globals);
-  const listResp = await client.call("DescribeModelList", { ModelIds: [opts["id"]] });
-  const models = (listResp["ModelSet"] as Array<Record<string, unknown>> | undefined) ?? [];
-  const model = models.find((m) => m["ModelId"] === opts["id"]);
-  if (!model) {
-    if (emitJson(null)) return;
-    console.log(t("doctor.modelCheck.notFound", { id: opts["id"] }));
-    return;
-  }
-  // 这行在两次调用之间，JSON 模式必须跳过，否则 stdout 变成「一行人话 + JSON」
-  if (!isJson()) {
-    console.log(
-      t("doctor.modelCheck.found", {
-        name: model["ModelName"] ?? "",
-        id: model["ModelId"] ?? "",
-        status: model["Status"] ?? "",
-      }),
-    );
-  }
 
-  const epResp = await client.call("DescribeModelEndpointList", {
-    Filters: [{ Name: "ModelId", Op: "EXACT", Values: [opts["id"]] }],
-  });
-  const endpoints = (epResp["ModelEndpointSet"] as Array<Record<string, unknown>> | undefined) ?? [];
+  const listResp = await client.call("DescribeModelList", { ModelIds: [id] });
+  const models = (listResp["ModelSet"] as Row[] | undefined) ?? [];
+  const model = models.find((m) => m["ModelId"] === id);
+  // 查不到时不再查接入点；+gen 模型仍往下走，给出「换地域 / 核对 ID」的提示
+  const endpoints = model
+    ? ((await client.call("DescribeModelEndpointList", { Filters: [{ Name: "ModelId", Op: "EXACT", Values: [id] }] }))["ModelEndpointSet"] as Row[] | undefined) ?? []
+    : [];
   const active = endpoints.filter((e) => {
     const s = String(e["Status"] ?? "").toUpperCase();
     return s === "ACTIVE" || s === "RUNNING";
   });
+  const route = genApis.length
+    ? await genRoute({ model: id, genApis, area, modelStatus: model ? String(model["Status"] ?? "") : undefined, endpoints, client }, globals)
+    : undefined;
 
-  // 诊断结论由「模型 + 其端点」共同决定，两者一起给出，调用方不必再猜
-  if (
-    emitJson({
-      Model: model,
-      Endpoints: endpoints,
-      ActiveEndpointCount: active.length,
-    })
-  ) {
+  // 诊断结论由「模型 + 其接入点（+ +gen 按量调用）」共同决定，一起给出，调用方不必再猜
+  if (isJson()) {
+    emitJson(
+      model || route
+        ? { Model: model ?? null, Endpoints: endpoints, ActiveEndpointCount: active.length, ...(route ? { GenRoute: route } : {}) }
+        : null,
+    );
     return;
   }
 
-  if (!endpoints.length) {
-    console.log(t("doctor.modelCheck.noEndpoint"));
-  } else if (!active.length) {
-    console.log(
-      t("doctor.modelCheck.noneActive", { count: endpoints.length }),
-    );
+  if (!model) {
+    console.log(t("doctor.modelCheck.notFound", { id }));
   } else {
-    console.log(t("doctor.modelCheck.ok", { count: endpoints.length, active: active.length }));
+    console.log(t("doctor.modelCheck.found", { name: model["ModelName"] ?? "", id: model["ModelId"] ?? "", status: model["Status"] ?? "" }));
+    if (!endpoints.length) {
+      console.log(t("doctor.modelCheck.noEndpoint"));
+    } else if (!active.length) {
+      console.log(t("doctor.modelCheck.noneActive", { count: endpoints.length }));
+    } else {
+      console.log(t("doctor.modelCheck.ok", { count: endpoints.length, active: active.length }));
+    }
   }
-  console.log(t("doctor.modelCheck.note"));
+  if (route) {
+    console.log("");
+    printGenRoute(route);
+  } else if (model) {
+    console.log(t("doctor.modelCheck.note"));
+  }
 }
 
 async function planCommand(opts: Record<string, string>, globals: GlobalArgs): Promise<void> {
@@ -429,9 +629,44 @@ function listErrorCodes(): void {
   }
   console.log("");
   console.log(t("doctor.error.listFooter"));
+  console.log(t("doctor.error.vendorFooter"));
 }
 
-function errorCommand(code: string | undefined): void {
+/** 打印一个厂商错误码的说明 */
+function printVendorError(info: VendorErrorInfo): void {
+  console.log(t("doctor.error.vendorHeader", { vendor: VENDOR_NAMES[info.vendor], code: info.code }));
+  console.log(`  ${t("error.reason", { reason: info.reason })}`);
+  console.log(`  ${t("error.fix", { fix: info.fix })}`);
+}
+
+/** --vendor：查该厂商的某个码；不带码时列出该厂商全部收录 */
+function vendorErrorCommand(vendor: string, code: string | undefined): void {
+  if (!VENDORS.includes(vendor as VendorId)) {
+    throw new Error(t("doctor.error.badVendor", { vendor, options: VENDORS.join(" | ") }));
+  }
+  const v = vendor as VendorId;
+  if (code) {
+    const info = lookupVendorError(v, code);
+    if (info) {
+      printVendorError(info);
+      return;
+    }
+    console.log(t("doctor.error.notFound", { code }));
+    console.log("");
+  }
+  const codes = vendorCodes(v);
+  console.log(t("doctor.error.vendorListHeader", { vendor: VENDOR_NAMES[v], count: codes.length }));
+  for (const c of codes) {
+    const info = lookupVendorError(v, c)!;
+    console.log(`    ${pad(c, 28)} ${info.reason}`);
+  }
+}
+
+function errorCommand(code: string | undefined, opts: { vendor?: string } = {}): void {
+  if (opts.vendor) {
+    vendorErrorCommand(opts.vendor, code);
+    return;
+  }
   // 不给 code 就列出收录了哪些，而不是报错——这是用户最常见的"我想知道有哪些"诉求
   if (!code) {
     listErrorCodes();
@@ -443,10 +678,17 @@ function errorCommand(code: string | undefined): void {
     console.log(code);
     console.log(`  ${t("error.reason", { reason: exact.reason })}`);
     console.log(`  ${t("error.fix", { fix: exact.fix })}`);
+    // +gen 场景下改给的修复建议（如 401007 / 401008 直接给 models activate <模型>）
+    const genFix = genFixOf(code, t("doctor.error.modelPlaceholder"));
+    if (genFix) console.log(`  ${t("doctor.error.genFix", { fix: genFix })}`);
     return;
   }
+  // 平台码没有全等命中：厂商错误码（同一个码可能出现在多个厂商，如 Kling 与 MiniMax 的 1002，全部列出）
+  const vendorHits = findVendorErrors(code);
+  for (const info of vendorHits) printVendorError(info);
   // 没有全等命中就按前缀找，便于只知道大类时也能查到（如输 AuthFailure 列出所有子码）
   const prefixed = ERROR_CODES.filter((k) => k.startsWith(code));
+  if (vendorHits.length && !prefixed.length) return;
   if (prefixed.length) {
     for (const k of prefixed) {
       const info = lookupError(k);
@@ -489,7 +731,7 @@ export function registerDoctorCommands(program: Command, getGlobals: () => Globa
     .command("model")
     .description(t("doctor.model.desc"))
     .requiredOption("--id <id>", "ModelId")
-    .action(async (opts) => modelCommand(opts, getGlobals()));
+    .action(async (opts: ModelCheckOptions) => modelCommand(opts, getGlobals()));
 
   doctor
     .command("plan")
@@ -501,5 +743,6 @@ export function registerDoctorCommands(program: Command, getGlobals: () => Globa
     .command("error")
     .description(t("doctor.error.desc"))
     .argument("[code]", t("doctor.error.arg"))
-    .action((code: string | undefined) => errorCommand(code));
+    .option("--vendor <vendor>", t("doctor.error.opt.vendor"))
+    .action((code: string | undefined, opts: { vendor?: string }) => errorCommand(code, opts));
 }

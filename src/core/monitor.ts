@@ -50,6 +50,11 @@ export interface MetricMeta {
    * 由调用方在下钻时明确提示，而不是静默返回空图。
    */
   uinOnly?: boolean;
+  /**
+   * 指标体系与 `uin` 那套不同源：查询时**不带 uin 维度**，维度完全由调用方的
+   * extraDimensions 决定（如 `TpEPkg*` 用 `tp_e_uin` + `tp_e_pkgid`）。默认 false = 带 uin。
+   */
+  accountScoped?: boolean;
 }
 
 /**
@@ -166,6 +171,42 @@ export const PERF_METRICS: MetricMeta[] = [
 
 /** monitor 缺省展示的健康度指标：请求量、错误率、两个关键延迟 */
 export const DEFAULT_PERF_KEYS = ["rpm", "error-ratio", "ttft", "latency"];
+
+/**
+ * 个人版 / 企业版 TokenPlan 套餐的用量指标（`TpEPkg*` 前缀）。
+ *
+ * 两套粒度：总量（Period=86400 得到每日趋势）与每分钟速率（Period=300 得到分钟级
+ * 走势）。Token 与积分各一组，`plan personal usage tokens` / `usage credits` 分别取用。
+ *
+ * 与上面按 uin 聚合那套不同源：维度是 `tp_e_uin`（**ownerUin**，不是账号 uin）+ `tp_e_pkgid`，
+ * 两个都不能少；且只在套餐所在地域有数据（国内 ap-guangzhou / 国际 ap-singapore），
+ * 传错地域会查空。均由 `plan-personal.ts` 的 packageTrend 负责传。
+ */
+export const PACKAGE_METRICS: MetricMeta[] = [
+  // 每日总量（Period 86400）：只有总量，接口没有"每日输入 / 输出"指标
+  { name: "TpEPkgTotalToken", key: "token", label: "每日Token总用量", unit: "token", accountScoped: false },
+  { name: "TpEPkgTotalCredits", key: "credits", label: "每日积分总用量", unit: "credit", accountScoped: false },
+  // 分钟级 Token（Period 300）：总量 / 输入 / 输出
+  { name: "TpEPkgTpm", key: "tpm", label: "每分钟Token用量", unit: "token/min", accountScoped: false },
+  { name: "TpEPkgInputTpm", key: "input-tpm", label: "每分钟输入Token用量", unit: "token/min", accountScoped: false },
+  { name: "TpEPkgOutputTpm", key: "output-tpm", label: "每分钟输出Token用量", unit: "token/min", accountScoped: false },
+  // 分钟级积分（Period 300）：总量 / 输入 / 输出，与 Token 分钟级一一对应
+  { name: "TpEPkgCredits", key: "credits-pm", label: "每分钟积分用量", unit: "credit/min", accountScoped: false },
+  { name: "TpEPkgInputCredits", key: "input-credits", label: "每分钟输入积分用量", unit: "credit/min", accountScoped: false },
+  { name: "TpEPkgOutputCredits", key: "output-credits", label: "每分钟输出积分用量", unit: "credit/min", accountScoped: false },
+];
+
+/** 按 key 找套餐指标 */
+export function packageMetricByKey(key: string): MetricMeta {
+  const hit = PACKAGE_METRICS.find((m) => m.key === key);
+  if (!hit) {
+    throw new Error(
+      `${t("metric.unknown", { key, options: PACKAGE_METRICS.map((m) => m.key).join(", ") })}\n` +
+        t("metric.unknownHint", { command: "thcli plan personal usage tokens" }),
+    );
+  }
+  return hit;
+}
 
 /**
  * 非文本模型（图片/视频/音频/3D）的按模型指标。
@@ -335,6 +376,8 @@ export function metricLabel(meta: MetricMeta): { label: string; unit: string } {
 export interface MonitorClient {
   /** 主账号 uin，指标维度要用它 */
   uin: string;
+  /** 主账号 ownerUin（`tp_e_uin` 维度用它——实测套餐指标认 ownerUin，不认账号 uin） */
+  ownerUin: string;
   /** 拉单个指标的时序 */
   fetch(meta: MetricMeta, params: MonitorQuery): Promise<MetricSeries>;
 }
@@ -359,6 +402,13 @@ export interface MonitorQuery {
    * 键是 DIMENSION_KEYS 里的短名，值是对象标识（模型名/端点 ID/密钥 ID）。
    */
   filters?: Record<string, string>;
+  /**
+   * 额外维度，直接用云监控的维度名（如 `tp_e_uin` / `tp_e_pkgid`）。
+   *
+   * 给不在这套 uin 维度体系里的指标用（`TpEPkg*` 按套餐聚合）。与 filters 不同，
+   * 它不做短名翻译、也不受 uinOnly 影响，由调用方按接口定义拼。
+   */
+  extraDimensions?: Array<{ Name: string; Value: string }>;
 }
 
 /** 把 CLI 的维度短名翻成云监控的维度名，未知名字明确报错 */
@@ -371,10 +421,16 @@ export function toApiDimension(key: string): string {
 }
 
 /**
- * 建监控客户端。会先查一次 sts:GetCallerIdentity 拿主账号 uin——指标维度是
- * uin，而本地凭证里只有 openId，没有 uin，故必须问一次云端。
+ * 建监控客户端。会先查一次 cam:GetUserAppId 拿主账号 uin / ownerUin——指标维度要用它们，
+ * 而本地凭证里只有 openId，没有 uin，故必须问一次云端。
+ *
+ * `region` 可覆盖：套餐指标（`TpEPkg*`）只在套餐所在地域有数据（国内 ap-guangzhou /
+ * 国际 ap-singapore），传错地域会查空。
  */
-export async function buildMonitorClient(args: GlobalArgs): Promise<MonitorClient> {
+export async function buildMonitorClient(
+  args: GlobalArgs,
+  regionOverride?: string,
+): Promise<MonitorClient> {
   const initial = parseGlobalArgs(args);
   await maybeRefreshCredential(initial.profile, initial.site);
   const cred = parseGlobalArgs(args);
@@ -384,14 +440,14 @@ export async function buildMonitorClient(args: GlobalArgs): Promise<MonitorClien
 
   const clientConfig = {
     credential: { secretId: cred.secretId, secretKey: cred.secretKey, token: cred.token },
-    region: cred.region,
+    region: regionOverride ?? cred.region,
     // agent 见 core/http-agent.ts：按环境配置强制解析集群 IP 并按需放宽证书
     profile: { httpProfile: { agent: agentForEnv(resolveEnv()) } },
   };
 
   // uin 走 cam:GetUserAppId（见 core/identity.ts）而不是 sts:GetCallerIdentity——
   // 后者不接受第三方联合身份的临时密钥，报 AccessKeyNotSupport
-  const { uin } = await resolveIdentity(args);
+  const { uin, ownerUin } = await resolveIdentity(args);
 
   const monitor = new CommonClient(
     cloudApiHostOf(resolveEnv(), MONITOR_PRODUCT),
@@ -405,6 +461,7 @@ export async function buildMonitorClient(args: GlobalArgs): Promise<MonitorClien
 
   return {
     uin,
+    ownerUin,
     async fetch(meta, query) {
       // 指标名与数据并发拉取，二者都就绪后再返回
       await labelsReady;
@@ -412,7 +469,12 @@ export async function buildMonitorClient(args: GlobalArgs): Promise<MonitorClien
       // uinOnly 指标带上下钻条件会查不到数据，故跳过并标记，由调用方告知用户。
       const wanted = Object.entries(query.filters ?? {});
       const drilldownIgnored = meta.uinOnly === true && wanted.length > 0;
-      const dimensions = [{ Name: "uin", Value: uin }];
+      // accountScoped=false 的指标（TpEPkg*）不带 uin，维度只由调用方给
+      const dimensions: Array<{ Name: string; Value: string }> =
+        meta.accountScoped === false ? [] : [{ Name: "uin", Value: uin }];
+      for (const d of query.extraDimensions ?? []) {
+        dimensions.push(d);
+      }
       if (!drilldownIgnored) {
         for (const [key, value] of wanted) {
           dimensions.push({ Name: toApiDimension(key), Value: value });

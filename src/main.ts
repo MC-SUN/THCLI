@@ -21,7 +21,9 @@ import { registerEnvCommands } from "./commands/env.js";
 import { registerLangCommands } from "./commands/lang.js";
 import { registerMonitorCommands } from "./commands/monitor.js";
 import { registerUsageCommands } from "./commands/usage.js";
+import { registerEquipCommands } from "./commands/agent.js";
 import { registerConnectCommands } from "./commands/connect.js";
+import { registerGenCommands } from "./commands/gen.js";
 import type { GlobalArgs } from "./core/credentials.js";
 import { initLang, t } from "./core/i18n.js";
 import { setJsonMode } from "./core/output.js";
@@ -124,20 +126,28 @@ function addGlobalOptionsToLeaves(root: Command): void {
   walk(root);
 }
 
+// 注册顺序即 help 里 Commands 的展示顺序，按"身份 → 资源 → 对话生成 → 套餐用量 → 诊断辅助"分组，
+// 让相关命令相邻（commander 默认按注册顺序列出，不做排序）。
+registerProfileCommands(program, getGlobals);
+registerSiteCommands(program, getGlobals);
+registerLangCommands(program, () => cliLangValue);
 registerAuthCommands(program, getGlobals);
+
 registerKeyCommands(program, getGlobals);
-registerModelCommands(program, getGlobals);
 registerEndpointCommands(program, getGlobals);
+registerModelCommands(program, getGlobals);
+
 registerChatCommands(program, getGlobals);
+registerGenCommands(program, getGlobals);
+
 registerPlanCommands(program, getGlobals);
 registerUsageCommands(program, getGlobals);
 registerMonitorCommands(program, getGlobals);
+
 registerDoctorCommands(program, getGlobals);
-registerProfileCommands(program, getGlobals);
-registerSiteCommands(program, getGlobals);
 registerEnvCommands(program, getGlobals);
-registerLangCommands(program, () => cliLangValue);
 registerConnectCommands(program);
+registerEquipCommands(program, getGlobals);
 
 // 全局凭证/环境选项默认只在子命令之前生效；给每个叶子命令也补一份，让它们出现在
 // 子命令之后也不报 unknown option（值由 getGlobals 统一读取，这里只为通过解析）。

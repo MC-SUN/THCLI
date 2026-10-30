@@ -34,7 +34,8 @@ const PREFIX = "thcli-";
  * 已知 Agent → 默认 skills 目录；表外的用 --target 兜底。
  *
  * 命名与路径均按各家 2026-09 官方文档：
- *   - Codex CLI 走的是社区共享标准 ~/.agents/skills（不是 ~/.codex/skills）
+ *   - Codex CLI 用自己的 ~/.codex/skills（$CODEX_HOME/skills），同时也读共享标准 ~/.agents/skills（实测 0.160 两处都加载）。
+ *     用 ~/.codex/skills：装了 Codex 就一定有 ~/.codex，而 ~/.agents 多数机器上不存在，按它探测会漏掉 Codex
  *   - Trae 官方目录带 -cn 后缀 ~/.trae-cn/skills
  *   - Cursor / Roo Code / Kilo Code / OpenClaw 也会读 ~/.agents/skills，
  *     但各自专属目录默认被扫，用专属目录更保险
@@ -46,7 +47,7 @@ const AGENT_TARGETS: Record<string, string> = {
   "claude-code":    path.join(os.homedir(), ".claude",    "skills"),
   "codebuddy-code": path.join(os.homedir(), ".codebuddy", "skills"),
   "cline":          path.join(os.homedir(), ".cline",     "skills"),
-  "codex":          path.join(os.homedir(), ".agents",    "skills"),
+  "codex":          path.join(process.env["CODEX_HOME"] || path.join(os.homedir(), ".codex"), "skills"),
   "cursor":         path.join(os.homedir(), ".cursor",    "skills"),
   "kilo-code":      path.join(os.homedir(), ".kilo",      "skills"),
   "openclaw":       path.join(os.homedir(), ".openclaw",  "skills"),
@@ -349,9 +350,15 @@ export function registerConnectCommands(program: Command): void {
       }
       // 先下载。网络失败时 refreshCommand 会自己 exit(1)
       await refreshCommand();
-      // refresh 内部只会同步"已注入过"的 Agent；首次装机没注入过，这里补一次
-      if (!detectInjectedTargets().length) {
+      // refresh 内部只同步"已注入过"的 Agent；本机检测到、但还没注入的（首次装机，或之后新装的 Agent）在这里补上。
+      // 只看"是否已注入"会漏掉新装的 Agent：已经给 Claude Code 注入过，之后装的 Codex 永远进不来
+      const injected = new Set(detectInjectedTargets().map(([label]) => label));
+      if (opts.target || !injected.size) {
         installSkills(opts.target);
+      } else {
+        const pending = resolveTargets(undefined).filter(([label]) => !injected.has(label));
+        const skills = cachedSkills();
+        if (pending.length && skills.length) install(pending, skills);
       }
     });
 }

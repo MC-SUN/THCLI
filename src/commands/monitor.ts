@@ -16,6 +16,7 @@ import { buildClient } from "../core/client.js";
 import type { GlobalArgs } from "../core/credentials.js";
 import { human, pad, verticalChart } from "../core/format.js";
 import { emitJson, isJson } from "../core/output.js";
+import { toOffsetIso } from "../core/time.js";
 import { lang, t } from "../core/i18n.js";
 import {
   buildMonitorClient,
@@ -49,23 +50,6 @@ function defaultTimeRange(): { start: string; end: string } {
   const dayAgo = new Date(now.getTime() - 24 * 3600 * 1000);
   const fmt = (d: Date): string => `${d.toISOString().slice(0, 19)}Z`;
   return { start: fmt(dayAgo), end: fmt(now) };
-}
-
-/** 转成监控接口要的 ISO8601 带偏移格式 */
-function toOffsetIso(value: string): string {
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) {
-    throw new Error(t("time.badFormat", { value }));
-  }
-  const p = (n: number): string => String(n).padStart(2, "0");
-  const offsetMin = -d.getTimezoneOffset();
-  const sign = offsetMin >= 0 ? "+" : "-";
-  const abs = Math.abs(offsetMin);
-  return (
-    `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` +
-    `T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` +
-    `${sign}${p(Math.floor(abs / 60))}:${p(abs % 60)}`
-  );
 }
 
 /** X 轴短标签 */

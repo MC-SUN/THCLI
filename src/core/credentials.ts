@@ -51,11 +51,16 @@ export interface CredentialFile {
    * 该凭证对应的账号身份，由 cam:GetUserAppId 查得后缓存下来（见 core/identity.ts）。
    * 缓存而不是每次查：它在凭证有效期内不会变，而 monitor 等命令每次都要用 uin
    * 做查询维度，不缓存就是每条命令多一次网络往返。
+   *
+   * secretId 记录「这份身份是用哪把密钥查出来的」，命中缓存前必须和当前实际生效的
+   * 主凭证密钥比对（见 resolveIdentity）：换了账号（文件内换人 / 命令行 / 环境变量
+   * 覆盖）密钥必变，secretId 不符即判缓存失效、重查，避免「密钥是 B、uin 还显示 A」。
    */
   identity?: {
     uin: string;
     ownerUin: string;
     appId: number;
+    secretId: string;
   };
 }
 
@@ -72,15 +77,6 @@ export interface ResolvedCredential {
   source: "cli" | "env" | "file" | "none";
   /** 凭证文件原始内容，auth status / hello 需要读 type/expiresAt */
   raw: CredentialFile;
-}
-
-function readTrimmedFile(path: string): string | undefined {
-  try {
-    const value = fs.readFileSync(path, "utf8").trim();
-    return value || undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 /**
@@ -136,6 +132,21 @@ export function readConfigure(profile: string): Record<string, unknown> {
 }
 
 /**
+ * region 解析：与主凭证解耦，可单独指定。优先级：命令行 > 环境变量 > per-profile
+ * 配置（profile set --region 写入）> 凭证文件 > 默认。
+ */
+function resolveRegion(profile: string, file: CredentialFile, cliRegion?: string): string {
+  const configuredRegion = readConfigure(profile)["region"];
+  return (
+    cliRegion ||
+    process.env["TENCENTCLOUD_REGION"] ||
+    (typeof configuredRegion === "string" ? configuredRegion : undefined) ||
+    file.region ||
+    DEFAULT_CLOUD_REGION
+  );
+}
+
+/**
  * 按「整包三选一」解析凭证。region 例外——它与主凭证解耦，走字段级独立回退。
  */
 export function parseGlobalArgs(args: GlobalArgs): ResolvedCredential {
@@ -172,17 +183,30 @@ export function parseGlobalArgs(args: GlobalArgs): ResolvedCredential {
     }
   }
 
-  // region 与主凭证解耦，可单独指定。优先级：命令行 > 环境变量 > per-profile
-  // 配置（profile set --region 写入）> 凭证文件 > 默认
-  const configuredRegion = readConfigure(profile)["region"];
-  const region =
-    args.region ||
-    process.env["TENCENTCLOUD_REGION"] ||
-    (typeof configuredRegion === "string" ? configuredRegion : undefined) ||
-    file.region ||
-    DEFAULT_CLOUD_REGION;
+  const region = resolveRegion(profile, file, args.region);
 
   return { profile, site, secretId, secretKey, token, region, source, raw: file };
+}
+
+/**
+ * 只认凭证文件、强制 source=file 的凭证解析，刻意不走命令行 / 环境变量覆盖。
+ *
+ * 专供 auth login 后预取身份：此刻文件里刚落盘的密钥才是用户本次登录的成果、
+ * 要长期持有的那把。若走 parseGlobalArgs，shell 里飘着的 TENCENTCLOUD_SECRET_ID
+ * 会抢先命中，于是「密钥落盘成 L、身份却按环境变量 E 查并缓存」，天生错配。
+ */
+export function credentialFromFile(profile: string, site: string): ResolvedCredential {
+  const file = readCredentialFile(profile, site);
+  return {
+    profile,
+    site,
+    secretId: file.secretId,
+    secretKey: file.secretKey,
+    token: file.token,
+    region: resolveRegion(profile, file),
+    source: "file",
+    raw: file,
+  };
 }
 
 /** 凭证脱敏：短于 8 位直接全遮，否则留头 4 尾 4 */

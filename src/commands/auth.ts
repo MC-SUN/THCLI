@@ -12,6 +12,7 @@ import { Command } from "commander";
 import { startCallbackServer } from "../core/browser-flow.js";
 import { allowedSites, callbackUrlOf, portalOf } from "../core/config.js";
 import {
+  credentialFromFile,
   type GlobalArgs,
   mask,
   parseGlobalArgs,
@@ -19,7 +20,7 @@ import {
   resolveSite,
 } from "../core/credentials.js";
 import { getTempCred, type OAuthToken, saveCredential } from "../core/oauth.js";
-import { resolveIdentity } from "../core/identity.js";
+import { resolveIdentityWithCred } from "../core/identity.js";
 import { CONFIG_DIR, credentialPath } from "../core/paths.js";
 import { ensureDataPlaneKey } from "../core/provision.js";
 import { printAligned } from "../core/format.js";
@@ -116,10 +117,14 @@ function promptLine(prompt: string): Promise<string> {
  * monitor 用 uin 做云监控的查询维度，测试环境还要用它做请求头路由——趁刚拿到
  * 凭证时一并取好，后续命令就不必各自触发一次查询。失败只是少了这份缓存，
  * 用到时会再查，所以不打断登录、也不打扰用户。
+ *
+ * 必须用 credentialFromFile（文件源），不能走 parseGlobalArgs：shell 里若设了
+ * TENCENTCLOUD_SECRET_ID，整包三选一会抢先命中环境变量，于是「密钥落盘成本次
+ * 登录的 L、身份却按环境变量 E 查并缓存」，造成密钥与 identity 错配。
  */
 async function prefetchIdentity(profile: string, site: string): Promise<void> {
   try {
-    await resolveIdentity({ profile, site });
+    await resolveIdentityWithCred(credentialFromFile(profile, site));
   } catch {
     // 该接口在部分环境可能不可用；不影响登录本身
   }
@@ -144,6 +149,16 @@ async function provisionChatKey(globals: GlobalArgs): Promise<void> {
   }
 }
 
+/** 打印当前站点 / 地域，并给出切换命令——登录时最容易"站错了"，让用户当场自查 */
+function printSiteHint(globals: GlobalArgs): void {
+  const site = resolveSite(globals);
+  const region = parseGlobalArgs(globals).region;
+  const otherSite = allowedSites().find((s) => s !== site) ?? site;
+  console.log(t("auth.login.siteHint", { site, region }));
+  console.log(t("auth.login.siteHintSwitch", { otherSite }));
+  console.log("");
+}
+
 async function loginCommand(opts: { browser?: string }, globals: GlobalArgs): Promise<void> {
   const profile = resolveProfile(globals);
   const site = resolveSite(globals);
@@ -151,6 +166,8 @@ async function loginCommand(opts: { browser?: string }, globals: GlobalArgs): Pr
     console.error(t("auth.login.badSite", { site, options: allowedSites().join(", ") }));
     process.exit(1);
   }
+
+  printSiteHint(globals);
 
   // state 用于防 CSRF：回调带回来的必须与本地生成的一致
   const state = randomBytes(8).toString("hex");
